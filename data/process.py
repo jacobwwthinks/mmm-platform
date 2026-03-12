@@ -67,17 +67,25 @@ def merge_channel_data(
     result = pd.DataFrame({"week_start": all_weeks})
 
     # Process revenue (Shopify)
+    # Shopify data arrives pre-aggregated to weekly (with week_start column)
+    # from ingest.py. If it still has a "date" column, fall back to daily→weekly.
     if "shopify" in raw_data and not raw_data["shopify"].empty:
-        shopify_weekly = daily_to_weekly(raw_data["shopify"])
-        if "revenue" in shopify_weekly.columns:
+        shopify_df = raw_data["shopify"]
+        if "week_start" in shopify_df.columns:
+            shopify_weekly = shopify_df.copy()
+            shopify_weekly["week_start"] = pd.to_datetime(shopify_weekly["week_start"])
+        else:
+            shopify_weekly = daily_to_weekly(shopify_df)
+
+        rev_cols = [c for c in shopify_weekly.columns
+                    if c != "week_start" and c in (
+                        "revenue", "orders", "new_revenue", "new_orders",
+                        "returning_revenue", "returning_orders", "total_discounts",
+                    )]
+        if rev_cols:
+            merge_cols = ["week_start"] + rev_cols
             result = result.merge(
-                shopify_weekly[["week_start", "revenue"]],
-                on="week_start",
-                how="left",
-            )
-        if "orders" in shopify_weekly.columns:
-            result = result.merge(
-                shopify_weekly[["week_start", "orders"]].drop_duplicates("week_start"),
+                shopify_weekly[merge_cols].drop_duplicates("week_start"),
                 on="week_start",
                 how="left",
             )

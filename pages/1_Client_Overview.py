@@ -104,6 +104,10 @@ if run_clicked:
                 st.warning(f"Column '{target}' not available. Falling back to 'revenue'.")
                 target = "revenue"
 
+            if target not in model_df.columns:
+                st.error("No revenue data available. Check that Shopify is connected in Windsor.ai.")
+                st.stop()
+
             results = model.fit(model_df, target_col=target)
 
             # Save results
