@@ -1,0 +1,20 @@
+# Secrets — NEVER commit
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Model results (regenerated per run)
+results/*.pkl
+results/*.csv
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

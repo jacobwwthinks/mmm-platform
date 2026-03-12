@@ -1,0 +1,20 @@
+# MMM Platform Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+pyyaml>=6.0
+requests>=2.28
+
+# Streamlit dashboard
+streamlit>=1.30
+plotly>=5.18
+
+# Optional: Google Meridian (full Bayesian backend)
+# Uncomment if you want the full Meridian experience:
+# google-meridian
+
+# Optional: PyMC-Marketing (alternative Bayesian backend)
+# pip install pymc-marketing

@@ -1,0 +1,124 @@
+# MMM Platform Configuration
+# Windsor.ai account mappings per client
+
+windsor:
+  api_url: "https://connectors.windsor.ai/all"
+  # API key loaded from Streamlit secrets (never commit to repo)
+  api_key: null
+
+clients:
+  juniper:
+    display_name: "Juniper"
+    currency: "SEK"
+    channels:
+      meta:
+        windsor_connector: "facebook"
+        windsor_account: "260486998006445"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      google_ads:
+        windsor_connector: "google_ads"
+        windsor_account: "732-548-8423"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      pinterest:
+        windsor_connector: "pinterest"
+        windsor_account: "549762165504"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      # TikTok: not connected for Juniper
+      # SMS: via CSV upload
+    email_source:
+      # Klaviyo via Windsor — CONNECTED
+      windsor_connector: "klaviyo"
+      windsor_account: "HpJAU2"
+      # Available fields: opens, clicks, revenue, subject, unsubscribed
+      # Note: Klaviyo returns per-campaign rows; ingestion aggregates to daily totals
+      opens_field: "opens"
+      clicks_field: "clicks"
+      revenue_field: "revenue"  # Klaviyo-attributed revenue (placed orders)
+    revenue_source:
+      windsor_connector: "shopify"
+      windsor_account: "juniperstorefront.myshopify.com"
+      revenue_field: "order_total_price"
+      orders_field: "order_count"
+    events_csv: "events/juniper_events.csv"
+    sms_csv: "events/juniper_sms_spend.csv"  # optional
+
+  djerf_avenue:
+    display_name: "Djerf Avenue"
+    currency: "SEK"
+    channels:
+      meta:
+        windsor_connector: "facebook"
+        windsor_account: "184665140272429"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      google_ads:
+        windsor_connector: "google_ads"
+        windsor_account: "548-531-5868"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      pinterest:
+        windsor_connector: "pinterest"
+        windsor_account: "549765623204"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      tiktok:
+        windsor_connector: "tiktok"
+        windsor_account: "7041126213837963265"
+        spend_field: "spend"
+        impressions_field: "impressions"
+    revenue_source:
+      windsor_connector: "shopify"
+      windsor_account: null  # not connected yet
+      revenue_field: "order_total_price"
+      orders_field: "order_count"
+    events_csv: "events/djerf_avenue_events.csv"
+
+  bagliora:
+    display_name: "Bagliora"
+    currency: "SEK"
+    channels:
+      meta:
+        windsor_connector: "facebook"
+        windsor_account: "654502285027281"
+        spend_field: "spend"
+        impressions_field: "impressions"
+    revenue_source:
+      windsor_connector: "shopify"
+      windsor_account: "bagliora-ab.myshopify.com"
+      revenue_field: "order_total_price"
+      orders_field: "order_count"
+    events_csv: "events/bagliora_events.csv"
+
+  redskapsbolaget:
+    display_name: "Redskapsbolaget"
+    currency: "SEK"
+    channels:
+      meta:
+        windsor_connector: "facebook"
+        windsor_account: "297021188964540"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      google_ads:
+        windsor_connector: "google_ads"
+        windsor_account: "757-178-3729"
+        spend_field: "spend"
+        impressions_field: "impressions"
+    revenue_source:
+      windsor_connector: "shopify"
+      windsor_account: null  # not connected yet
+      revenue_field: "order_total_price"
+      orders_field: "order_count"
+    events_csv: "events/redskapsbolaget_events.csv"
+
+# Model defaults
+model:
+  granularity: "weekly"  # weekly recommended for 2+ year datasets
+  min_weeks: 52          # minimum data required to run model
+  recommended_weeks: 104 # ideal amount
+  n_warmup: 1000         # MCMC warmup samples
+  n_samples: 1000        # MCMC posterior samples
+  n_chains: 4            # parallel MCMC chains
+  test_weeks: 8          # holdout period for validation
