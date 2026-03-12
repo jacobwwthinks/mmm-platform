@@ -173,52 +173,35 @@ def fetch_client_data(
 
     # Fetch revenue data from Shopify — aggregated directly to WEEKLY.
     # Shopify returns one row per order, so large date ranges exceed Windsor's
-    # response size limit. We fetch in quarterly chunks and include year_week_iso
-    # so we can aggregate to weekly right here (the model works on weekly data).
+    # response size limit. We fetch in monthly chunks with year_week_iso and
+    # aggregate to weekly totals. Note: customer_is_returning causes size limit
+    # errors even for quarterly ranges, so we skip it for now.
     rev_cfg = client_cfg.get("revenue_source", {})
     rev_account = rev_cfg.get("windsor_account")
     if rev_account:
         all_shopify_chunks = []
         start = pd.Timestamp(date_from)
         end = pd.Timestamp(date_to)
-        # Quarterly chunks keep each request under Windsor's size limit
-        chunk_starts = pd.date_range(start, end, freq="QS")
+        # Monthly chunks to stay safely under Windsor's size limit
+        chunk_starts = pd.date_range(start, end, freq="MS")
         if len(chunk_starts) == 0:
             chunk_starts = pd.DatetimeIndex([start])
 
         for i, chunk_start in enumerate(chunk_starts):
-            chunk_end = min(chunk_start + pd.DateOffset(months=3) - pd.Timedelta(days=1), end)
+            chunk_end = min(chunk_start + pd.offsets.MonthEnd(1), end)
             try:
                 df_chunk = ingester.fetch_channel_data(
                     connector=rev_cfg["windsor_connector"],
                     account_id=rev_account,
                     date_from=str(chunk_start.date()),
                     date_to=str(chunk_end.date()),
-                    fields=[
-                        "year_week_iso",
-                        "order_total_price",
-                        "order_count",
-                        "customer_is_returning",
-                    ],
+                    fields=["year_week_iso", "order_total_price", "order_count"],
                 )
                 if not df_chunk.empty:
                     all_shopify_chunks.append(df_chunk)
-                    logger.info(f"  Shopify Q{i+1}/{len(chunk_starts)}: {len(df_chunk)} rows")
+                    logger.info(f"  Shopify month {i+1}/{len(chunk_starts)}: {len(df_chunk)} rows")
             except Exception as e:
-                logger.warning(f"  Shopify Q{i+1} failed with full fields: {e}")
-                try:
-                    df_chunk = ingester.fetch_channel_data(
-                        connector=rev_cfg["windsor_connector"],
-                        account_id=rev_account,
-                        date_from=str(chunk_start.date()),
-                        date_to=str(chunk_end.date()),
-                        fields=["year_week_iso", "order_total_price", "order_count"],
-                    )
-                    if not df_chunk.empty:
-                        all_shopify_chunks.append(df_chunk)
-                        logger.info(f"  Shopify Q{i+1} (simple): {len(df_chunk)} rows")
-                except Exception as e2:
-                    logger.error(f"  Shopify Q{i+1} failed completely: {e2}")
+                logger.error(f"  Shopify month {chunk_start.date()} failed: {e}")
 
         if all_shopify_chunks:
             df = pd.concat(all_shopify_chunks, ignore_index=True)
@@ -231,31 +214,11 @@ def fetch_client_data(
             df["week_start"] = df["year_week_iso"].apply(yw_to_date)
 
             # Aggregate directly to weekly totals
-            has_returning = "customer_is_returning" in df.columns
-            if has_returning:
-                df["customer_is_returning"] = df["customer_is_returning"].fillna(False)
-                df["is_new"] = ~df["customer_is_returning"].astype(bool)
-
-                new_df = df[df["is_new"]].groupby("week_start").agg(
-                    new_revenue=("order_total_price", "sum"),
-                    new_orders=("order_count", "sum"),
-                ).reset_index()
-
-                ret_df = df[~df["is_new"]].groupby("week_start").agg(
-                    returning_revenue=("order_total_price", "sum"),
-                    returning_orders=("order_count", "sum"),
-                ).reset_index()
-            else:
-                new_df = pd.DataFrame(columns=["week_start", "new_revenue", "new_orders"])
-                ret_df = pd.DataFrame(columns=["week_start", "returning_revenue", "returning_orders"])
-
-            total_df = df.groupby("week_start").agg(
+            shopify_df = df.groupby("week_start").agg(
                 revenue=("order_total_price", "sum"),
                 orders=("order_count", "sum"),
             ).reset_index()
 
-            shopify_df = total_df.merge(new_df, on="week_start", how="left").merge(ret_df, on="week_start", how="left")
-            shopify_df = shopify_df.fillna(0)
             result["shopify"] = shopify_df
             logger.info(f"  Shopify total: {len(shopify_df)} weekly rows")
         else:
