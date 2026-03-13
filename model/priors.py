@@ -46,6 +46,7 @@ DTC_CHANNEL_PRIORS = {
     "meta": ChannelPrior(
         # Meta (Facebook/Instagram): Broad reach, moderate carryover.
         # Brand awareness ads have longer decay; conversion ads shorter.
+        # Beta is in z-score units (fraction of revenue std dev).
         adstock_decay_mean=0.4,
         adstock_decay_sd=0.15,
         adstock_max_lag=4,
@@ -53,8 +54,8 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=1.0,
         saturation_lam_mean=0.5,
         saturation_lam_sd=0.3,
-        beta_mean=0.15,
-        beta_sd=0.1,
+        beta_mean=0.4,
+        beta_sd=0.3,
         notes="Primary acquisition channel for most DTC brands. "
               "Mix of prospecting + retargeting. Moderate carryover."
     ),
@@ -69,8 +70,8 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=1.0,
         saturation_lam_mean=0.4,
         saturation_lam_sd=0.2,
-        beta_mean=0.2,
-        beta_sd=0.12,
+        beta_mean=0.3,
+        beta_sd=0.25,
         notes="High-intent search channel. Short carryover effect. "
               "Often captures demand created by other channels."
     ),
@@ -85,8 +86,8 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=1.0,
         saturation_lam_mean=0.5,
         saturation_lam_sd=0.3,
-        beta_mean=0.12,
-        beta_sd=0.08,
+        beta_mean=0.25,
+        beta_sd=0.2,
         notes="Discovery platform. Content-driven. Moderate lag effect "
               "as awareness converts over days/weeks."
     ),
@@ -101,8 +102,8 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=0.8,
         saturation_lam_mean=0.6,
         saturation_lam_sd=0.3,
-        beta_mean=0.08,
-        beta_sd=0.06,
+        beta_mean=0.15,
+        beta_sd=0.15,
         notes="Upper-funnel discovery. Long carryover — users pin and return "
               "weeks later. Lower direct attribution but persistent effect."
     ),
@@ -117,8 +118,8 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=1.0,
         saturation_lam_mean=0.3,
         saturation_lam_sd=0.2,
-        beta_mean=0.1,
-        beta_sd=0.08,
+        beta_mean=0.2,
+        beta_sd=0.15,
         notes="Direct response channel. Nearly immediate effect. "
               "Primarily drives returning customer revenue."
     ),
@@ -133,8 +134,8 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=1.0,
         saturation_lam_mean=0.5,
         saturation_lam_sd=0.3,
-        beta_mean=0.1,
-        beta_sd=0.07,
+        beta_mean=0.2,
+        beta_sd=0.15,
         notes="Retention/CRM channel. Short lag (open within days). "
               "Primarily drives returning customer revenue."
     ),
@@ -148,8 +149,8 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=1.0,
         saturation_lam_mean=0.5,
         saturation_lam_sd=0.3,
-        beta_mean=0.08,
-        beta_sd=0.06,
+        beta_mean=0.15,
+        beta_sd=0.15,
         notes="Younger demographic. Similar to TikTok but typically "
               "smaller scale for DTC brands."
     ),

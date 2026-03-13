@@ -213,6 +213,17 @@ def prepare_model_input(
     # Identify spend columns for the model
     spend_cols = sorted([c for c in df.columns if c.endswith("_spend")])
 
+    # Drop weeks with zero revenue but non-zero spend (data gaps, not real)
+    if "revenue" in df.columns:
+        spend_cols_check = [c for c in df.columns if c.endswith("_spend")]
+        if spend_cols_check:
+            total_spend = df[spend_cols_check].sum(axis=1)
+            data_gaps = (df["revenue"] == 0) & (total_spend > 0)
+            n_gaps = data_gaps.sum()
+            if n_gaps > 0:
+                logger.warning(f"Dropping {n_gaps} weeks with zero revenue but active spend (data gaps)")
+                df = df[~data_gaps].reset_index(drop=True)
+
     # Data quality checks
     n_weeks = len(df)
     if n_weeks < 52:
