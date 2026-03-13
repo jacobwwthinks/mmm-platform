@@ -35,6 +35,17 @@ config = st.session_state.get("config", load_config())
 
 st.header(client_cfg.get("display_name", selected_client))
 
+# ── Plotly theme helper ──────────────────────────────────────
+
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E6EDF3",
+    font_family="Inter, sans-serif",
+)
+ORANGE = "#F58518"
+TEAL = "#76B7B2"
+
 # ── Data Controls ────────────────────────────────────────────
 
 col1, col2, col3 = st.columns([2, 2, 2])
@@ -96,26 +107,36 @@ if run_clicked:
             model_df = prepare_model_input(merged, events_df)
             st.session_state["model_df"] = model_df
 
-        with st.spinner("Fitting MMM (this may take a minute)..."):
-            model = create_model(config.get("model", {}))
-            target = target_col_map.get(target_type, "revenue")
+        # Check for revenue data
+        target = target_col_map.get(target_type, "revenue")
+        if target not in model_df.columns:
+            target = "revenue"
+        if target not in model_df.columns or model_df[target].sum() == 0:
+            st.error("No revenue data available. Check that the Shopify CSV exists in the data/ folder.")
+            st.stop()
 
-            if target not in model_df.columns:
-                st.warning(f"Column '{target}' not available. Falling back to 'revenue'.")
-                target = "revenue"
+        # Check for active spend channels before attempting model fit
+        active_spend_cols = [c for c in model_df.columns if c.endswith("_spend") and model_df[c].sum() > 0]
+        if "email_opens" in model_df.columns and model_df["email_opens"].sum() > 0:
+            active_spend_cols.append("email_opens")
 
-            if target not in model_df.columns:
-                st.error("No revenue data available. Check that Shopify is connected in Windsor.ai.")
-                st.stop()
+        if not active_spend_cols:
+            st.warning("No ad spend data available. Connect your ad platforms in Windsor.ai to run the full MMM.")
+            st.session_state["mmm_results"] = None
+            # Store revenue-only data for the overview below
+            st.session_state["revenue_only"] = True
+        else:
+            with st.spinner("Fitting MMM (this may take a minute)..."):
+                model = create_model(config.get("model", {}))
+                results = model.fit(model_df, target_col=target)
 
-            results = model.fit(model_df, target_col=target)
+                # Save results
+                results_dir.mkdir(parents=True, exist_ok=True)
+                results.save(str(results_dir))
+                st.session_state["mmm_results"] = results
+                st.session_state["revenue_only"] = False
 
-            # Save results
-            results_dir.mkdir(parents=True, exist_ok=True)
-            results.save(str(results_dir))
-            st.session_state["mmm_results"] = results
-
-        st.success("Model fitted successfully!")
+            st.success("Model fitted successfully!")
 
 # ── Load existing results ────────────────────────────────────
 
@@ -123,6 +144,78 @@ results = st.session_state.get("mmm_results")
 if results is None and (results_dir / "results.pkl").exists():
     results = MMMResults.load(str(results_dir))
     st.session_state["mmm_results"] = results
+
+# ── Revenue-only dashboard (when no ad data is available) ────
+
+model_df = st.session_state.get("model_df")
+revenue_only = st.session_state.get("revenue_only", False)
+
+if results is None and model_df is not None and "revenue" in model_df.columns and model_df["revenue"].sum() > 0:
+    # Show revenue overview even without the full MMM
+    st.markdown("---")
+    st.subheader("Revenue Overview")
+
+    total_rev = model_df["revenue"].sum()
+    total_orders = model_df["orders"].sum() if "orders" in model_df.columns else 0
+    avg_weekly_rev = model_df["revenue"].mean()
+    n_weeks = len(model_df)
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Revenue", f"{total_rev:,.0f}")
+    with col2:
+        st.metric("Total Orders", f"{total_orders:,.0f}")
+    with col3:
+        st.metric("Avg Weekly Revenue", f"{avg_weekly_rev:,.0f}")
+    with col4:
+        st.metric("Weeks of Data", f"{n_weeks}")
+
+    # Revenue time series
+    fig_rev = go.Figure()
+    fig_rev.add_trace(go.Scatter(
+        x=model_df["week_start"],
+        y=model_df["revenue"],
+        name="Weekly Revenue",
+        line=dict(color=ORANGE, width=2),
+        fill="tozeroy",
+        fillcolor="rgba(245, 133, 24, 0.1)",
+    ))
+    # 4-week moving average
+    if len(model_df) >= 4:
+        ma4 = model_df["revenue"].rolling(4).mean()
+        fig_rev.add_trace(go.Scatter(
+            x=model_df["week_start"],
+            y=ma4,
+            name="4-Week MA",
+            line=dict(color=TEAL, width=2, dash="dot"),
+        ))
+    fig_rev.update_layout(
+        yaxis_title="Revenue",
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        **PLOTLY_LAYOUT,
+    )
+    st.plotly_chart(fig_rev, use_container_width=True)
+
+    # Orders time series
+    if "orders" in model_df.columns:
+        fig_orders = go.Figure()
+        fig_orders.add_trace(go.Scatter(
+            x=model_df["week_start"],
+            y=model_df["orders"],
+            name="Weekly Orders",
+            line=dict(color=TEAL, width=2),
+        ))
+        fig_orders.update_layout(
+            yaxis_title="Orders",
+            height=300,
+            **PLOTLY_LAYOUT,
+        )
+        st.plotly_chart(fig_orders, use_container_width=True)
+
+    if revenue_only:
+        st.info("Connect ad platform accounts in Windsor.ai to enable the full Marketing Mix Model with channel ROAS and budget optimization.")
+    st.stop()
 
 if results is None:
     st.info("No results available. Click 'Fetch Data & Run Model' above, or upload data below.")
@@ -139,16 +232,19 @@ if results is None:
         if st.button("Run Model on Uploaded Data"):
             model = create_model(config.get("model", {}))
             spend_cols = get_spend_columns(model_df)
-            results = model.fit(model_df, target_col="revenue", spend_cols=spend_cols)
-            results_dir.mkdir(parents=True, exist_ok=True)
-            results.save(str(results_dir))
-            st.session_state["mmm_results"] = results
-            st.rerun()
+            if not spend_cols:
+                st.error("No active spend columns found in the uploaded CSV.")
+            else:
+                results = model.fit(model_df, target_col="revenue", spend_cols=spend_cols)
+                results_dir.mkdir(parents=True, exist_ok=True)
+                results.save(str(results_dir))
+                st.session_state["mmm_results"] = results
+                st.rerun()
 
     st.stop()
 
 # ═══════════════════════════════════════════════════════════════
-# RESULTS DASHBOARD
+# RESULTS DASHBOARD (full MMM results available)
 # ═══════════════════════════════════════════════════════════════
 
 # ── Summary Cards ────────────────────────────────────────────
@@ -200,7 +296,7 @@ fig_waterfall = go.Figure(go.Waterfall(
     textposition="outside",
     text=[f"{v:,.0f}" for v in wf_df["value"]],
     connector={"line": {"color": "rgb(63, 63, 63)"}},
-    increasing={"marker": {"color": "#F58518"}},
+    increasing={"marker": {"color": ORANGE}},
     decreasing={"marker": {"color": "#E15759"}},
     totals={"marker": {"color": "#59A14F"}},
 ))
@@ -209,10 +305,7 @@ fig_waterfall.update_layout(
     yaxis_title="Revenue",
     showlegend=False,
     height=400,
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E6EDF3",
-    font_family="Inter, sans-serif",
+    **PLOTLY_LAYOUT,
 )
 st.plotly_chart(fig_waterfall, use_container_width=True)
 
@@ -220,23 +313,19 @@ st.plotly_chart(fig_waterfall, use_container_width=True)
 
 st.subheader("Actual vs. Model Predicted Revenue")
 
-model_df = st.session_state.get("model_df")
 if model_df is not None:
     weeks = model_df["week_start"]
 else:
     weeks = pd.date_range(results.date_range[0], periods=results.n_weeks, freq="W-MON")
 
 fig_ts = go.Figure()
-fig_ts.add_trace(go.Scatter(x=weeks, y=results.actual, name="Actual", line=dict(color="#F58518", width=2)))
-fig_ts.add_trace(go.Scatter(x=weeks, y=results.predicted, name="Predicted", line=dict(color="#76B7B2", width=2, dash="dot")))
+fig_ts.add_trace(go.Scatter(x=weeks, y=results.actual, name="Actual", line=dict(color=ORANGE, width=2)))
+fig_ts.add_trace(go.Scatter(x=weeks, y=results.predicted, name="Predicted", line=dict(color=TEAL, width=2, dash="dot")))
 fig_ts.update_layout(
     yaxis_title="Revenue",
     height=350,
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E6EDF3",
-    font_family="Inter, sans-serif",
+    **PLOTLY_LAYOUT,
 )
 st.plotly_chart(fig_ts, use_container_width=True)
 
