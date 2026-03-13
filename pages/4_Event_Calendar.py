@@ -19,6 +19,11 @@ st.title("Event Calendar")
 
 selected_client = st.session_state.get("selected_client", "juniper")
 client_cfg = st.session_state.get("client_config", {})
+config = st.session_state.get("config")
+
+# Try to get client config from main config if not in session state
+if not client_cfg and config:
+    client_cfg = config.get("clients", {}).get(selected_client, {})
 
 st.header(f"Events — {client_cfg.get('display_name', selected_client)}")
 

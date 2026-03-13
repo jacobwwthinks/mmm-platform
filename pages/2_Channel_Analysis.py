@@ -21,6 +21,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from model.mmm import MMMResults, geometric_adstock, hill_saturation
 
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E6EDF3",
+    font_family="Inter, sans-serif",
+)
+ORANGE = "#F58518"
+
 st.title("Channel Analysis")
 
 # ── Load Results ─────────────────────────────────────────────
@@ -30,9 +38,21 @@ if results is None:
     results_dir = Path(f"results/{st.session_state.get('selected_client', 'juniper')}")
     if (results_dir / "results.pkl").exists():
         results = MMMResults.load(str(results_dir))
-    else:
-        st.info("No model results available. Run the model from the Client Overview page first.")
-        st.stop()
+
+if results is None:
+    st.markdown("### Ad platform data required")
+    st.markdown(
+        "Channel Analysis shows saturation curves, adstock decay, and ROAS for each "
+        "media channel. This requires running the Marketing Mix Model, which needs "
+        "active ad spend data from at least one platform."
+    )
+    st.markdown("**To enable this page:**")
+    st.markdown(
+        "1. Ensure your Windsor.ai API key is set in Streamlit secrets\n"
+        "2. Connect at least one ad platform (Meta, Google Ads, Pinterest, etc.)\n"
+        "3. Go to **Client Overview** and click **Fetch Data & Run Model**"
+    )
+    st.stop()
 
 # ── ROAS Comparison ──────────────────────────────────────────
 
@@ -64,10 +84,7 @@ fig_roas.update_layout(
     yaxis_title="ROAS (Return on Ad Spend)",
     height=400,
     showlegend=False,
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E6EDF3",
-    font_family="Inter, sans-serif",
+    **PLOTLY_LAYOUT,
 )
 st.plotly_chart(fig_roas, use_container_width=True)
 
@@ -96,7 +113,7 @@ fig_sat.add_trace(go.Scatter(
     x=spend_range,
     y=saturated,
     mode="lines",
-    line=dict(color="#F58518", width=3),
+    line=dict(color=ORANGE, width=3),
     name="Saturation curve",
 ))
 
@@ -118,10 +135,7 @@ fig_sat.update_layout(
     yaxis_title="Effect (0 = none, 1 = fully saturated)",
     height=350,
     yaxis_range=[0, 1.05],
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E6EDF3",
-    font_family="Inter, sans-serif",
+    **PLOTLY_LAYOUT,
 )
 
 st.plotly_chart(fig_sat, use_container_width=True)
@@ -147,7 +161,7 @@ fig_adstock = go.Figure()
 fig_adstock.add_trace(go.Bar(
     x=lag_weeks,
     y=lag_weights,
-    marker_color="#F58518",
+    marker_color=ORANGE,
     text=[f"{w:.1%}" for w in lag_weights],
     textposition="outside",
 ))
@@ -157,10 +171,7 @@ fig_adstock.update_layout(
     height=300,
     yaxis_range=[0, 1.1],
     xaxis=dict(tickmode="linear"),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E6EDF3",
-    font_family="Inter, sans-serif",
+    **PLOTLY_LAYOUT,
 )
 st.plotly_chart(fig_adstock, use_container_width=True)
 
@@ -184,16 +195,13 @@ fig_contrib.add_trace(go.Scatter(
     y=contrib,
     fill="tozeroy",
     fillcolor="rgba(245, 133, 24, 0.2)",
-    line=dict(color="#F58518", width=2),
+    line=dict(color=ORANGE, width=2),
     name="Channel contribution to revenue",
 ))
 fig_contrib.update_layout(
     yaxis_title="Revenue Contribution",
     height=300,
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E6EDF3",
-    font_family="Inter, sans-serif",
+    **PLOTLY_LAYOUT,
 )
 st.plotly_chart(fig_contrib, use_container_width=True)
 

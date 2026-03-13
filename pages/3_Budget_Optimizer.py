@@ -18,6 +18,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from model.mmm import MMMResults
 from optimize.budget import optimize_budget, scenario_analysis
 
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E6EDF3",
+    font_family="Inter, sans-serif",
+)
+
 st.title("Budget Optimizer")
 
 # ── Load Results ─────────────────────────────────────────────
@@ -27,9 +34,21 @@ if results is None:
     results_dir = Path(f"results/{st.session_state.get('selected_client', 'juniper')}")
     if (results_dir / "results.pkl").exists():
         results = MMMResults.load(str(results_dir))
-    else:
-        st.info("No model results available. Run the model from the Client Overview page first.")
-        st.stop()
+
+if results is None:
+    st.markdown("### Ad platform data required")
+    st.markdown(
+        "The Budget Optimizer uses the fitted Marketing Mix Model to find the "
+        "optimal allocation of ad spend across channels. This requires active "
+        "ad spend data from at least one platform."
+    )
+    st.markdown("**To enable this page:**")
+    st.markdown(
+        "1. Ensure your Windsor.ai API key is set in Streamlit secrets\n"
+        "2. Connect at least one ad platform (Meta, Google Ads, Pinterest, etc.)\n"
+        "3. Go to **Client Overview** and click **Fetch Data & Run Model**"
+    )
+    st.stop()
 
 # ── Budget Controls ──────────────────────────────────────────
 
@@ -100,7 +119,7 @@ with col1:
         hole=0.4,
         marker_colors=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"],
     ))
-    fig_current.update_layout(height=300, margin=dict(t=20, b=20), paper_bgcolor="rgba(0,0,0,0)", font_color="#E6EDF3", font_family="Inter, sans-serif")
+    fig_current.update_layout(height=300, margin=dict(t=20, b=20), **PLOTLY_LAYOUT)
     st.plotly_chart(fig_current, use_container_width=True)
 
 with col2:
@@ -111,7 +130,7 @@ with col2:
         hole=0.4,
         marker_colors=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"],
     ))
-    fig_recommended.update_layout(height=300, margin=dict(t=20, b=20), paper_bgcolor="rgba(0,0,0,0)", font_color="#E6EDF3", font_family="Inter, sans-serif")
+    fig_recommended.update_layout(height=300, margin=dict(t=20, b=20), **PLOTLY_LAYOUT)
     st.plotly_chart(fig_recommended, use_container_width=True)
 
 # ── Detailed Recommendations Table ───────────────────────────
@@ -173,10 +192,7 @@ fig_scenario.update_layout(
     xaxis_title="Weekly Budget",
     yaxis_title="Estimated Weekly Revenue",
     height=350,
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E6EDF3",
-    font_family="Inter, sans-serif",
+    **PLOTLY_LAYOUT,
 )
 st.plotly_chart(fig_scenario, use_container_width=True)
 
