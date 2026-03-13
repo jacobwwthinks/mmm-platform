@@ -171,63 +171,23 @@ def fetch_client_data(
             logger.error(f"Failed to fetch {channel_name} for {client_key}: {e}")
             result[channel_name] = pd.DataFrame(columns=["date", "spend", "impressions"])
 
-    # Fetch revenue data from Shopify — aggregated directly to WEEKLY.
-    # Shopify returns one row per order, so large date ranges exceed Windsor's
-    # response size limit. We fetch in monthly chunks with year_week_iso and
-    # aggregate to weekly totals. Note: customer_is_returning causes size limit
-    # errors even for quarterly ranges, so we skip it for now.
-    rev_cfg = client_cfg.get("revenue_source", {})
-    rev_account = rev_cfg.get("windsor_account")
-    if rev_account:
-        all_shopify_chunks = []
-        start = pd.Timestamp(date_from)
-        end = pd.Timestamp(date_to)
-        # Monthly chunks to stay safely under Windsor's size limit
-        chunk_starts = pd.date_range(start, end, freq="MS")
-        if len(chunk_starts) == 0:
-            chunk_starts = pd.DatetimeIndex([start])
-
-        for i, chunk_start in enumerate(chunk_starts):
-            chunk_end = min(chunk_start + pd.offsets.MonthEnd(1), end)
-            try:
-                df_chunk = ingester.fetch_channel_data(
-                    connector=rev_cfg["windsor_connector"],
-                    account_id=rev_account,
-                    date_from=str(chunk_start.date()),
-                    date_to=str(chunk_end.date()),
-                    fields=["year_week_iso", "order_total_price", "order_count"],
-                )
-                if not df_chunk.empty:
-                    all_shopify_chunks.append(df_chunk)
-                    logger.info(f"  Shopify month {i+1}/{len(chunk_starts)}: {len(df_chunk)} rows")
-            except Exception as e:
-                logger.error(f"  Shopify month {chunk_start.date()} failed: {e}")
-
-        if all_shopify_chunks:
-            df = pd.concat(all_shopify_chunks, ignore_index=True)
-
-            # Convert year_week_iso ("2025|03") to a Monday date for that ISO week
-            def yw_to_date(yw: str) -> pd.Timestamp:
-                year, week = yw.split("|")
-                return pd.Timestamp.fromisocalendar(int(year), int(week), 1)
-
-            df["week_start"] = df["year_week_iso"].apply(yw_to_date)
-
-            # Aggregate directly to weekly totals
-            shopify_df = df.groupby("week_start").agg(
-                revenue=("order_total_price", "sum"),
-                orders=("order_count", "sum"),
-            ).reset_index()
-
-            result["shopify"] = shopify_df
-            logger.info(f"  Shopify total: {len(shopify_df)} weekly rows")
-        else:
-            logger.error(f"No Shopify data retrieved for {client_key}")
-            result["shopify"] = pd.DataFrame(
-                columns=["week_start", "revenue", "orders"]
-            )
+    # Load Shopify revenue data from pre-built CSV.
+    # Shopify order data is too large for Windsor's runtime size limits,
+    # so we pre-aggregate it offline and commit the CSV to the repo.
+    # To update: re-run the Windsor data pull locally and regenerate the CSV.
+    shopify_csv = Path(__file__).parent / f"{client_key}_shopify_weekly.csv"
+    if shopify_csv.exists():
+        shopify_df = pd.read_csv(shopify_csv, parse_dates=["week_start"])
+        # Filter to requested date range
+        shopify_df = shopify_df[
+            (shopify_df["week_start"] >= date_from)
+            & (shopify_df["week_start"] <= date_to)
+        ].copy()
+        result["shopify"] = shopify_df
+        logger.info(f"  Shopify: loaded {len(shopify_df)} weekly rows from {shopify_csv.name}")
     else:
-        logger.warning(f"No Shopify account configured for {client_key}")
+        logger.warning(f"No Shopify CSV found at {shopify_csv}. Run data pull to generate it.")
+        result["shopify"] = pd.DataFrame(columns=["week_start", "revenue", "orders"])
 
     # Fetch email data from Klaviyo (via Windsor) if configured
     # Klaviyo returns one row per campaign/flow per day.
