@@ -136,40 +136,29 @@ def fetch_client_data(
         }
     """
     client_cfg = config["clients"][client_key]
-    ingester = WindsorIngester(api_key=api_key)
     result = {}
 
-    # Fetch ad platform data
-    for channel_name, channel_cfg in client_cfg.get("channels", {}).items():
-        if channel_cfg is None:
-            continue
+    # Load ad platform data from pre-built weekly CSVs.
+    # Like Shopify, ad data is pre-aggregated offline and committed to the repo
+    # so the deployed app doesn't need a Windsor API key at runtime.
+    for channel_name in client_cfg.get("channels", {}):
+        channel_csv = Path(__file__).parent / f"{client_key}_{channel_name}_weekly.csv"
+        logger.info(f"  {channel_name} CSV path: {channel_csv} (exists={channel_csv.exists()})")
 
-        account_id = channel_cfg.get("windsor_account")
-        if not account_id:
-            logger.info(f"Skipping {channel_name}: no account configured")
-            continue
-
-        try:
-            df = ingester.fetch_channel_data(
-                connector=channel_cfg["windsor_connector"],
-                account_id=account_id,
-                date_from=date_from,
-                date_to=date_to,
-                fields=[
-                    "date",
-                    channel_cfg.get("spend_field", "spend"),
-                    channel_cfg.get("impressions_field", "impressions"),
-                ],
-            )
-            # Normalize column names
-            df = df.rename(columns={
-                channel_cfg.get("spend_field", "spend"): "spend",
-                channel_cfg.get("impressions_field", "impressions"): "impressions",
-            })
-            result[channel_name] = df
-        except Exception as e:
-            logger.error(f"Failed to fetch {channel_name} for {client_key}: {e}")
-            result[channel_name] = pd.DataFrame(columns=["date", "spend", "impressions"])
+        if channel_csv.exists():
+            ch_df = pd.read_csv(channel_csv, parse_dates=["week_start"])
+            logger.info(f"  {channel_name} CSV raw: {len(ch_df)} rows")
+            dt_from = pd.Timestamp(date_from)
+            dt_to = pd.Timestamp(date_to)
+            ch_df = ch_df[
+                (ch_df["week_start"] >= dt_from)
+                & (ch_df["week_start"] <= dt_to)
+            ].copy()
+            result[channel_name] = ch_df
+            logger.info(f"  {channel_name}: {len(ch_df)} weekly rows after date filter")
+        else:
+            logger.warning(f"No {channel_name} CSV found at {channel_csv}")
+            result[channel_name] = pd.DataFrame(columns=["week_start", "spend", "impressions", "clicks"])
 
     # Load Shopify revenue data from pre-built CSV.
     # Shopify order data is too large for Windsor's runtime size limits,
@@ -201,6 +190,7 @@ def fetch_client_data(
     email_account = email_cfg.get("windsor_account")
     if email_account:
         try:
+            ingester = WindsorIngester(api_key=api_key)
             df = ingester.fetch_channel_data(
                 connector=email_cfg["windsor_connector"],
                 account_id=email_account,

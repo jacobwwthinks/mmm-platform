@@ -103,6 +103,8 @@ def merge_channel_data(
         result["orders"] = 0.0
 
     # Process each ad channel (paid media)
+    # Ad data may arrive as pre-aggregated weekly CSVs (with week_start column)
+    # or as daily data (with date column) — handle both cases.
     ad_channels = [k for k in raw_data if k not in ("shopify", "sms", "email")]
     for channel_name in ad_channels:
         df = raw_data[channel_name]
@@ -111,7 +113,11 @@ def merge_channel_data(
             result[f"{channel_name}_impressions"] = 0.0
             continue
 
-        weekly = daily_to_weekly(df)
+        if "week_start" in df.columns:
+            weekly = df.copy()
+            weekly["week_start"] = pd.to_datetime(weekly["week_start"])
+        else:
+            weekly = daily_to_weekly(df)
 
         # Rename columns with channel prefix
         rename_map = {}
