@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.events import load_events, generate_event_template
 
-st.title("📅 Event Calendar")
+st.title("Event Calendar")
 
 selected_client = st.session_state.get("selected_client", "juniper")
 client_cfg = st.session_state.get("client_config", {})
@@ -37,7 +37,7 @@ else:
 
 # ── Generate Template ────────────────────────────────────────
 
-with st.expander("🔧 Generate Event Template"):
+with st.expander("Generate Event Template"):
     col1, col2 = st.columns(2)
     with col1:
         template_from = st.date_input("From", value=pd.Timestamp("2024-01-01"), key="tmpl_from")
@@ -55,7 +55,7 @@ with st.expander("🔧 Generate Event Template"):
 
 # ── Upload Calendar ──────────────────────────────────────────
 
-with st.expander("📁 Upload Event Calendar CSV"):
+with st.expander("Upload Event Calendar CSV"):
     st.markdown("""
     Upload a CSV with columns:
     - `week_start` — Monday date (YYYY-MM-DD)
@@ -75,7 +75,7 @@ with st.expander("📁 Upload Event Calendar CSV"):
 
 # ── SMS Spend Upload ─────────────────────────────────────────
 
-with st.expander("📱 Upload SMS Spend Data"):
+with st.expander("Upload SMS Spend Data"):
     st.markdown("""
     Upload weekly SMS spend as CSV:
     - `week_start` — Monday date (YYYY-MM-DD)
@@ -135,7 +135,7 @@ if not events_df.empty:
             height=400,
         )
 
-        if st.button("💾 Save Changes"):
+        if st.button("Save Changes"):
             edited_df.to_csv(events_path, index=False)
             st.success("Calendar saved!")
 
@@ -148,9 +148,9 @@ if not events_df.empty:
     fig = go.Figure()
 
     for event_type, color, label in [
-        ("discount_campaign", "#FFB700", "Discount Campaigns"),
-        ("product_drop", "#44AF69", "Product Drops"),
-        ("holiday", "#2E86AB", "Holidays"),
+        ("discount_campaign", "#F58518", "Discount Campaigns"),
+        ("product_drop", "#59A14F", "Product Drops"),
+        ("holiday", "#76B7B2", "Holidays"),
     ]:
         mask = events_df[event_type] == 1
         if mask.any():
@@ -170,6 +170,10 @@ if not events_df.empty:
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(l=0, r=0, t=30, b=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#E6EDF3",
+        font_family="Inter, sans-serif",
     )
     st.plotly_chart(fig, use_container_width=True)
 

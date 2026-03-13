@@ -25,7 +25,7 @@ from model.diagnostics import assess_model_quality
 
 logging.basicConfig(level=logging.INFO)
 
-st.title("📈 Client Overview")
+st.title("Client Overview")
 
 # ── Get selected client ──────────────────────────────────────
 
@@ -59,7 +59,7 @@ target_col_map = {
 
 # ── Run Model ────────────────────────────────────────────────
 
-run_clicked = st.button("🚀 Fetch Data & Run Model", type="primary", use_container_width=True)
+run_clicked = st.button("Fetch Data & Run Model", type="primary", use_container_width=True)
 
 results_dir = Path(f"results/{selected_client}")
 
@@ -128,7 +128,7 @@ if results is None:
     st.info("No results available. Click 'Fetch Data & Run Model' above, or upload data below.")
 
     # CSV upload fallback
-    st.markdown("### 📁 Or upload CSV data")
+    st.markdown("### Or upload CSV data")
     st.markdown("Upload a CSV with columns: `week_start`, `revenue`, `meta_spend`, `google_ads_spend`, etc.")
     uploaded = st.file_uploader("Upload model data CSV", type="csv")
     if uploaded:
@@ -200,15 +200,19 @@ fig_waterfall = go.Figure(go.Waterfall(
     textposition="outside",
     text=[f"{v:,.0f}" for v in wf_df["value"]],
     connector={"line": {"color": "rgb(63, 63, 63)"}},
-    increasing={"marker": {"color": "#2E86AB"}},
-    decreasing={"marker": {"color": "#E84855"}},
-    totals={"marker": {"color": "#44AF69"}},
+    increasing={"marker": {"color": "#F58518"}},
+    decreasing={"marker": {"color": "#E15759"}},
+    totals={"marker": {"color": "#59A14F"}},
 ))
 fig_waterfall.update_layout(
     title="Revenue Attribution by Component",
     yaxis_title="Revenue",
     showlegend=False,
     height=400,
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E6EDF3",
+    font_family="Inter, sans-serif",
 )
 st.plotly_chart(fig_waterfall, use_container_width=True)
 
@@ -223,12 +227,16 @@ else:
     weeks = pd.date_range(results.date_range[0], periods=results.n_weeks, freq="W-MON")
 
 fig_ts = go.Figure()
-fig_ts.add_trace(go.Scatter(x=weeks, y=results.actual, name="Actual", line=dict(color="#2E86AB", width=2)))
-fig_ts.add_trace(go.Scatter(x=weeks, y=results.predicted, name="Predicted", line=dict(color="#E84855", width=2, dash="dot")))
+fig_ts.add_trace(go.Scatter(x=weeks, y=results.actual, name="Actual", line=dict(color="#F58518", width=2)))
+fig_ts.add_trace(go.Scatter(x=weeks, y=results.predicted, name="Predicted", line=dict(color="#76B7B2", width=2, dash="dot")))
 fig_ts.update_layout(
     yaxis_title="Revenue",
     height=350,
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E6EDF3",
+    font_family="Inter, sans-serif",
 )
 st.plotly_chart(fig_ts, use_container_width=True)
 
@@ -257,9 +265,9 @@ st.dataframe(
 
 # ── Model Quality ────────────────────────────────────────────
 
-with st.expander("🔍 Model Diagnostics"):
+with st.expander("Model Diagnostics"):
     checks = assess_model_quality(results)
     for check_name, check_data in checks.items():
-        status_icon = {"good": "✅", "ok": "⚠️", "warning": "🔴"}.get(check_data["status"], "ℹ️")
+        status_icon = {"good": "[OK]", "ok": "[WARN]", "warning": "[!]"}.get(check_data["status"], "[i]")
         value_str = f" ({check_data['value']:.3f})" if "value" in check_data else ""
         st.markdown(f"{status_icon} **{check_name}**{value_str}: {check_data['note']}")

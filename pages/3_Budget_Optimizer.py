@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from model.mmm import MMMResults
 from optimize.budget import optimize_budget, scenario_analysis
 
-st.title("💰 Budget Optimizer")
+st.title("Budget Optimizer")
 
 # ── Load Results ─────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ with col2:
 
 # ── Run Optimization ─────────────────────────────────────────
 
-if st.button("🎯 Optimize Allocation", type="primary", use_container_width=True):
+if st.button("Optimize Allocation", type="primary", use_container_width=True):
     with st.spinner("Optimizing..."):
         opt_df = optimize_budget(
             results,
@@ -80,9 +80,9 @@ if opt_df is None:
 
 lift_pct = opt_df.attrs.get("estimated_lift_pct", 0)
 if lift_pct > 0:
-    st.success(f"✅ Estimated revenue lift from reallocation: **+{lift_pct:.1f}%**")
+    st.success(f"Estimated revenue lift from reallocation: **+{lift_pct:.1f}%**")
 elif lift_pct < 0:
-    st.warning(f"⚠️ Budget reduction may decrease revenue by **{lift_pct:.1f}%**")
+    st.warning(f"Budget reduction may decrease revenue by **{lift_pct:.1f}%**")
 else:
     st.info("Current allocation is already near-optimal")
 
@@ -98,9 +98,9 @@ with col1:
         labels=opt_df["channel"].str.replace("_", " ").str.title(),
         values=opt_df["current_weekly_spend"],
         hole=0.4,
-        marker_colors=px.colors.qualitative.Set2,
+        marker_colors=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"],
     ))
-    fig_current.update_layout(height=300, margin=dict(t=20, b=20))
+    fig_current.update_layout(height=300, margin=dict(t=20, b=20), paper_bgcolor="rgba(0,0,0,0)", font_color="#E6EDF3", font_family="Inter, sans-serif")
     st.plotly_chart(fig_current, use_container_width=True)
 
 with col2:
@@ -109,9 +109,9 @@ with col2:
         labels=opt_df["channel"].str.replace("_", " ").str.title(),
         values=opt_df["recommended_weekly_spend"],
         hole=0.4,
-        marker_colors=px.colors.qualitative.Set2,
+        marker_colors=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"],
     ))
-    fig_recommended.update_layout(height=300, margin=dict(t=20, b=20))
+    fig_recommended.update_layout(height=300, margin=dict(t=20, b=20), paper_bgcolor="rgba(0,0,0,0)", font_color="#E6EDF3", font_family="Inter, sans-serif")
     st.plotly_chart(fig_recommended, use_container_width=True)
 
 # ── Detailed Recommendations Table ───────────────────────────
@@ -153,7 +153,7 @@ fig_scenario.add_trace(go.Scatter(
     x=scenarios["weekly_budget"],
     y=scenarios["estimated_weekly_revenue"],
     mode="lines+markers",
-    line=dict(color="#2E86AB", width=3),
+    line=dict(color="#F58518", width=3),
     marker=dict(size=10),
     name="Estimated Weekly Revenue",
 ))
@@ -165,7 +165,7 @@ if not current_row.empty:
         x=current_row["weekly_budget"],
         y=current_row["estimated_weekly_revenue"],
         mode="markers",
-        marker=dict(size=15, color="#E84855", symbol="star"),
+        marker=dict(size=15, color="#E15759", symbol="star"),
         name="Current Budget",
     ))
 
@@ -173,12 +173,16 @@ fig_scenario.update_layout(
     xaxis_title="Weekly Budget",
     yaxis_title="Estimated Weekly Revenue",
     height=350,
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E6EDF3",
+    font_family="Inter, sans-serif",
 )
 st.plotly_chart(fig_scenario, use_container_width=True)
 
 # ── Export ────────────────────────────────────────────────────
 
-with st.expander("📥 Export Recommendations"):
+with st.expander("Export Recommendations"):
     csv = opt_df.to_csv(index=False)
     st.download_button(
         "Download as CSV",

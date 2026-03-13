@@ -11,10 +11,27 @@ from pathlib import Path
 
 st.set_page_config(
     page_title="MMM Platform",
-    page_icon="📊",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Custom CSS: Inter font + dark theme polish ──────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html, body, [class*="css"], .stMarkdown, .stText, .stDataFrame,
+h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+
+/* Plotly charts: transparent background to match theme */
+.js-plotly-plot .plotly .main-svg {
+    background: transparent !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ── Authentication ──────────────────────────────────────────
 
@@ -23,7 +40,7 @@ def check_password():
     if "authenticated" in st.session_state and st.session_state["authenticated"]:
         return True
 
-    st.title("📊 MMM Platform")
+    st.title("MMM Platform")
     st.markdown("Enter the team password to continue.")
 
     password = st.text_input("Password", type="password", key="password_input")
@@ -60,7 +77,7 @@ config = load_config()
 
 # ── Sidebar: Client Selection ────────────────────────────────
 
-st.sidebar.title("📊 MMM Platform")
+st.sidebar.title("MMM Platform")
 st.sidebar.markdown("---")
 
 clients = config.get("clients", {})
@@ -86,22 +103,22 @@ channels = client_cfg.get("channels", {})
 st.sidebar.markdown("**Connected Channels:**")
 for ch_name, ch_cfg in channels.items():
     if ch_cfg and ch_cfg.get("windsor_account"):
-        st.sidebar.markdown(f"  ✅ {ch_name.replace('_', ' ').title()}")
+        st.sidebar.markdown(f"  + {ch_name.replace('_', ' ').title()}")
     else:
-        st.sidebar.markdown(f"  ⬜ {ch_name.replace('_', ' ').title()}")
+        st.sidebar.markdown(f"  - {ch_name.replace('_', ' ').title()}")
 
 # Show email source
 email_cfg = client_cfg.get("email_source", {})
 if email_cfg.get("windsor_account"):
-    st.sidebar.markdown(f"  ✅ Email (Klaviyo)")
+    st.sidebar.markdown(f"  + Email (Klaviyo)")
 else:
-    st.sidebar.markdown(f"  ⬜ Email (Klaviyo)")
+    st.sidebar.markdown(f"  - Email (Klaviyo)")
 
 rev_source = client_cfg.get("revenue_source", {})
 if rev_source.get("windsor_account"):
-    st.sidebar.markdown(f"  ✅ Shopify (Revenue)")
+    st.sidebar.markdown(f"  + Shopify (Revenue)")
 else:
-    st.sidebar.markdown(f"  ⬜ Shopify (Revenue)")
+    st.sidebar.markdown(f"  - Shopify (Revenue)")
 
 st.sidebar.markdown("---")
 
@@ -128,7 +145,7 @@ Welcome to the MMM Platform. Use the pages in the sidebar to:
 
 To run the model for a client:
 1. Ensure all channels are connected in Windsor.ai (see sidebar)
-2. Go to **Client Overview** and click "Fetch Data & Run Model"
+2. Go to **Client Overview** and click \"Fetch Data & Run Model\"
 3. Review the results across all pages
 4. Use the **Budget Optimizer** for allocation recommendations
 """)
@@ -136,6 +153,6 @@ To run the model for a client:
 # Quick stats if results exist
 results_path = Path(f"results/{selected_client}")
 if results_path.exists():
-    st.success("✅ Model results available — navigate to pages to explore")
+    st.success("Model results available — navigate to pages to explore.")
 else:
-    st.info("ℹ️ No model results yet for this client. Go to Client Overview to run the model.")
+    st.info("No model results yet for this client. Go to Client Overview to run the model.")
