@@ -71,6 +71,7 @@ def merge_channel_data(
     # from ingest.py. If it still has a "date" column, fall back to daily→weekly.
     if "shopify" in raw_data and not raw_data["shopify"].empty:
         shopify_df = raw_data["shopify"]
+        logger.info(f"Shopify data: {len(shopify_df)} rows, cols={list(shopify_df.columns)}")
         if "week_start" in shopify_df.columns:
             shopify_weekly = shopify_df.copy()
             shopify_weekly["week_start"] = pd.to_datetime(shopify_weekly["week_start"])
@@ -89,6 +90,17 @@ def merge_channel_data(
                 on="week_start",
                 how="left",
             )
+            logger.info(f"After Shopify merge: revenue col exists={('revenue' in result.columns)}, non-null={result.get('revenue', pd.Series()).notna().sum()}")
+    else:
+        logger.warning(f"Shopify data is empty or missing. raw_data keys={list(raw_data.keys())}, "
+                       f"shopify empty={raw_data.get('shopify', pd.DataFrame()).empty}")
+
+    # Ensure revenue and orders columns always exist (even if Shopify data was empty)
+    if "revenue" not in result.columns:
+        logger.warning("Revenue column missing after Shopify merge — adding zeros")
+        result["revenue"] = 0.0
+    if "orders" not in result.columns:
+        result["orders"] = 0.0
 
     # Process each ad channel (paid media)
     ad_channels = [k for k in raw_data if k not in ("shopify", "sms", "email")]

@@ -176,15 +176,19 @@ def fetch_client_data(
     # so we pre-aggregate it offline and commit the CSV to the repo.
     # To update: re-run the Windsor data pull locally and regenerate the CSV.
     shopify_csv = Path(__file__).parent / f"{client_key}_shopify_weekly.csv"
+    logger.info(f"  Shopify CSV path: {shopify_csv} (exists={shopify_csv.exists()})")
     if shopify_csv.exists():
         shopify_df = pd.read_csv(shopify_csv, parse_dates=["week_start"])
-        # Filter to requested date range
+        logger.info(f"  Shopify CSV raw: {len(shopify_df)} rows, cols={list(shopify_df.columns)}")
+        # Filter to requested date range (explicit Timestamp conversion for safety)
+        dt_from = pd.Timestamp(date_from)
+        dt_to = pd.Timestamp(date_to)
         shopify_df = shopify_df[
-            (shopify_df["week_start"] >= date_from)
-            & (shopify_df["week_start"] <= date_to)
+            (shopify_df["week_start"] >= dt_from)
+            & (shopify_df["week_start"] <= dt_to)
         ].copy()
         result["shopify"] = shopify_df
-        logger.info(f"  Shopify: loaded {len(shopify_df)} weekly rows from {shopify_csv.name}")
+        logger.info(f"  Shopify: {len(shopify_df)} weekly rows after date filter ({dt_from.date()} to {dt_to.date()})")
     else:
         logger.warning(f"No Shopify CSV found at {shopify_csv}. Run data pull to generate it.")
         result["shopify"] = pd.DataFrame(columns=["week_start", "revenue", "orders"])

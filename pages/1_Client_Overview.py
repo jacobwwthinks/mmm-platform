@@ -75,8 +75,8 @@ if run_clicked:
 
             # Show raw data summary
             for source, df in raw_data.items():
-                if not df.empty:
-                    st.caption(f"  {source}: {len(df)} rows")
+                status = f"{len(df)} rows" if not df.empty else "empty"
+                st.caption(f"  {source}: {status}")
         except Exception as e:
             st.error(f"Error fetching data: {e}")
             st.info("Make sure WINDSOR_API_KEY is set. You can also upload CSV files below.")
