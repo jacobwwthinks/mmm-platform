@@ -168,6 +168,11 @@ CONTROL_PRIORS = {
         "sd": 0.15,
         "notes": "New product drops drive excitement and purchase; effect is immediate"
     },
+    "product_offering": {
+        "mean": 0.1,
+        "sd": 0.1,
+        "notes": "Smaller non-site-wide offers (Valentine, Mother's Day, etc.); modest lift"
+    },
     "holiday": {
         "mean": 0.2,
         "sd": 0.15,

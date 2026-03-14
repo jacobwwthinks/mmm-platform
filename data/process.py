@@ -208,6 +208,7 @@ def prepare_model_input(
         # Add empty event columns
         df["discount_campaign"] = 0
         df["product_drop"] = 0
+        df["product_offering"] = 0
         df["holiday"] = 0
 
     # Identify spend columns for the model

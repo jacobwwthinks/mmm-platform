@@ -220,7 +220,7 @@ class LightweightMMM:
             if "email_opens" in df.columns and df["email_opens"].sum() > 0:
                 spend_cols.append("email_opens")
         if control_cols is None:
-            control_cols = [c for c in ["discount_campaign", "product_drop", "holiday"]
+            control_cols = [c for c in ["discount_campaign", "product_drop", "product_offering", "holiday"]
                           if c in df.columns]
 
         y = df[target_col].values.astype(float)
