@@ -31,16 +31,9 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
     background: transparent !important;
 }
 
-/* Rename "app" to "Home" in sidebar navigation */
-[data-testid="stSidebarNav"] li:first-child a span {
-    visibility: hidden;
-    position: relative;
-}
-[data-testid="stSidebarNav"] li:first-child a span::after {
-    content: "Home";
-    visibility: visible;
-    position: absolute;
-    left: 0;
+/* Hide default auto-generated sidebar nav (we build our own below) */
+[data-testid="stSidebarNav"] {
+    display: none;
 }
 
 /* Lighter heading weight — less clunky bold */
@@ -95,9 +88,18 @@ def load_config():
 
 config = load_config()
 
-# ── Sidebar: Client Selection ────────────────────────────────
+# ── Sidebar: Navigation + Client Selection ──────────────────
 
 st.sidebar.title("MMM Platform")
+st.sidebar.markdown("---")
+
+# Custom navigation (replaces auto-generated sidebar nav)
+st.sidebar.page_link("app.py", label="Home")
+st.sidebar.page_link("pages/1_Client_Overview.py", label="Client Overview")
+st.sidebar.page_link("pages/2_Channel_Analysis.py", label="Channel Analysis")
+st.sidebar.page_link("pages/3_Budget_Optimizer.py", label="Budget Optimizer")
+st.sidebar.page_link("pages/4_Event_Calendar.py", label="Event Calendar")
+
 st.sidebar.markdown("---")
 
 clients = config.get("clients", {})

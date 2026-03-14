@@ -439,6 +439,192 @@ if not email_display.empty:
         "The attributed revenue reflects the model's estimate of revenue driven by email activity."
     )
 
+# ── Actionable Insights ──────────────────────────────────────
+
+st.subheader("Insights & Recommendations")
+
+def generate_insights(results):
+    """Generate actionable insights from model results, flagging uncertainties."""
+    roas_df = results.channel_roas.copy()
+    params = results.channel_params
+    total_revenue = results.actual.sum()
+    baseline_total = results.baseline_contribution.sum()
+    baseline_pct = baseline_total / total_revenue * 100
+
+    insights = []  # list of (emoji, title, body, severity)
+
+    # ── Baseline dominance check ──
+    if baseline_pct > 80:
+        insights.append((
+            "organic",
+            "Organic revenue dominates",
+            f"**{baseline_pct:.0f}%** of revenue comes from baseline (organic) demand. "
+            f"Paid media accounts for a relatively small slice — which may mean the brand "
+            f"is already well established, or that the model can't confidently attribute "
+            f"revenue to ad spend at current levels.",
+            "info",
+        ))
+    elif baseline_pct > 60:
+        insights.append((
+            "organic",
+            "Strong organic foundation",
+            f"**{baseline_pct:.0f}%** of revenue is organic. Paid channels are meaningful "
+            f"contributors but the brand doesn't depend on them — a healthy position.",
+            "success",
+        ))
+
+    # ── Per-channel insights ──
+    paid_channels = roas_df[roas_df["channel"] != "email"]
+    total_paid_spend = paid_channels["total_spend"].sum()
+
+    for _, row in roas_df.iterrows():
+        ch = row["channel"]
+        ch_display = ch.replace("_", " ").title()
+        is_email = ch == "email"
+
+        if is_email:
+            contrib = row["total_contribution"]
+            contrib_pct = contrib / total_revenue * 100
+            insights.append((
+                "email",
+                f"Email — {contrib_pct:.1f}% of revenue attributed",
+                f"The model attributes **{contrib:,.0f} SEK** in revenue to email activity. "
+                f"Since the model uses opens (not spend) as the input, this reflects correlation "
+                f"between email engagement and sales — some of which may be driven by already-intent "
+                f"customers rather than email itself. Treat this as an upper bound.",
+                "info",
+            ))
+            continue
+
+        roas_mean = row["roas_mean"]
+        roas_lo = row["roas_5"]
+        roas_hi = row["roas_95"]
+        ci_width = roas_hi - roas_lo
+        spend_share = row["total_spend"] / (total_paid_spend + 1e-8) * 100
+        contrib = row["total_contribution"]
+
+        # Saturation level
+        ch_params = params.get(ch, {})
+        sat_alpha = ch_params.get("saturation_alpha", 1)
+        sat_lam = ch_params.get("saturation_lam", 1)
+
+        # Is the confidence interval too wide to be actionable?
+        ci_is_wide = ci_width > 3.0 or (roas_mean > 0 and ci_width / (roas_mean + 1e-8) > 1.5)
+
+        # Low spend → noisy
+        is_low_spend = spend_share < 5
+
+        if is_low_spend:
+            insights.append((
+                "grey",
+                f"{ch_display} — too little spend to read clearly",
+                f"Only **{spend_share:.1f}%** of total ad budget. The model estimates "
+                f"**{roas_mean:.1f}x ROAS** but the 90% CI is {roas_lo:.1f}x – {roas_hi:.1f}x. "
+                f"At this scale, the signal is buried in noise. Either scale up to test properly "
+                f"or reallocate this budget to higher-confidence channels.",
+                "warning",
+            ))
+        elif ci_is_wide:
+            insights.append((
+                "grey",
+                f"{ch_display} — wide uncertainty range",
+                f"ROAS is estimated at **{roas_mean:.1f}x** but the 90% CI spans "
+                f"**{roas_lo:.1f}x – {roas_hi:.1f}x** — too wide to act on with high confidence. "
+                f"This often means the channel's week-to-week spend variation is low, making it hard "
+                f"for the model to isolate its effect. Consider running deliberate spend tests "
+                f"(scale up/down for 4–6 weeks) to sharpen the estimate.",
+                "warning",
+            ))
+        elif roas_mean < 1.0 and roas_hi < 1.5:
+            insights.append((
+                "action",
+                f"{ch_display} — below breakeven ({roas_mean:.2f}x)",
+                f"ROAS is **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
+                f"Even the optimistic end of the range is marginal. Consider reducing spend "
+                f"and reinvesting in better-performing channels — unless this channel serves "
+                f"a top-of-funnel awareness goal that the model can't fully capture.",
+                "error",
+            ))
+        elif roas_mean < 1.0 and roas_hi >= 1.5:
+            insights.append((
+                "grey",
+                f"{ch_display} — below breakeven but uncertain ({roas_mean:.2f}x)",
+                f"Point estimate is **{roas_mean:.2f}x** but the CI reaches up to **{roas_hi:.1f}x**. "
+                f"The true ROAS might be above breakeven. Don't cut spend drastically — instead "
+                f"gather more data or run controlled spend tests to narrow the range.",
+                "warning",
+            ))
+        elif roas_mean >= 1.0 and roas_mean < 2.0:
+            insights.append((
+                "ok",
+                f"{ch_display} — modest return ({roas_mean:.2f}x)",
+                f"ROAS of **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
+                f"Positive but not exceptional. Hold current spend. If the saturation curve "
+                f"shows room to grow, a modest increase could be worthwhile as a test.",
+                "info",
+            ))
+        elif roas_mean >= 2.0:
+            insights.append((
+                "action",
+                f"{ch_display} — strong return ({roas_mean:.2f}x)",
+                f"ROAS of **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
+                f"{'The confidence interval is tight — this is a reliable signal. ' if not ci_is_wide else ''}"
+                f"Check the saturation curve in Channel Analysis — if the channel isn't heavily "
+                f"saturated, scaling spend here is likely the highest-leverage move.",
+                "success",
+            ))
+
+    # ── Model fit caveat ──
+    if results.r_squared < 0.7:
+        insights.append((
+            "grey",
+            "Model fit is moderate — interpret with caution",
+            f"R² = {results.r_squared:.2f} means the model explains {results.r_squared*100:.0f}% of "
+            f"revenue variance. The remaining {(1-results.r_squared)*100:.0f}% is driven by factors "
+            f"not in the model (e.g. PR, word-of-mouth, competitor activity, weather). "
+            f"All ROAS estimates should be treated as directional rather than precise.",
+            "warning",
+        ))
+    elif results.r_squared < 0.85:
+        insights.append((
+            "fit",
+            "Model fit is good but not airtight",
+            f"R² = {results.r_squared:.2f}. The model captures most revenue patterns but "
+            f"there are unexplained fluctuations. ROAS estimates are useful for relative "
+            f"comparison between channels, but exact numbers carry some uncertainty.",
+            "info",
+        ))
+
+    return insights
+
+insights = generate_insights(results)
+
+for emoji_key, title, body, severity in insights:
+    icon = {
+        "action": ":material/trending_up:",
+        "organic": ":material/spa:",
+        "email": ":material/mail:",
+        "grey": ":material/help:",
+        "ok": ":material/check_circle:",
+        "fit": ":material/analytics:",
+    }.get(emoji_key, ":material/info:")
+
+    if severity == "error":
+        st.error(f"**{title}**\n\n{body}", icon=icon)
+    elif severity == "warning":
+        st.warning(f"**{title}**\n\n{body}", icon=icon)
+    elif severity == "success":
+        st.success(f"**{title}**\n\n{body}", icon=icon)
+    else:
+        st.info(f"**{title}**\n\n{body}", icon=icon)
+
+st.caption(
+    "These insights are generated from the model's fitted parameters and uncertainty estimates. "
+    "They are meant to inform decisions, not replace judgement. MMMs measure correlation-based "
+    "attribution — not true incrementality. For high-stakes budget changes, validate with "
+    "controlled geo-lift or holdout experiments."
+)
+
 # ── Model Quality ────────────────────────────────────────────
 
 with st.expander("Model Diagnostics"):
