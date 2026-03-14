@@ -17,7 +17,7 @@ import logging
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.ingest import fetch_client_data, load_config, process_revenue_csv
+from data.ingest import fetch_client_data, load_config, process_revenue_csvs
 from data.process import merge_channel_data, prepare_model_input, get_spend_columns
 from data.events import load_events, generate_event_template
 from model.mmm import create_model, MMMResults
@@ -54,24 +54,13 @@ with col1:
 with col2:
     date_to = st.date_input("Data to", value=pd.Timestamp.now().date())
 with col3:
-    # If the revenue CSV has new/returning splits, offer target selection
-    rev_csv_check = Path(__file__).parent.parent / "data" / f"{selected_client}_shopify_weekly.csv"
-    has_customer_splits = False
-    if rev_csv_check.exists():
-        rev_cols = pd.read_csv(rev_csv_check, nrows=0).columns.tolist()
-        has_customer_splits = "new_revenue" in rev_cols and "returning_revenue" in rev_cols
-
-    if has_customer_splits:
-        target_type = st.selectbox(
-            "Revenue target",
-            ["Total Revenue", "New Customer Revenue", "Returning Customer Revenue"],
-            index=0,
-            help="Which revenue metric to model. 'New Customer Revenue' is recommended "
-                 "for evaluating paid media effectiveness."
-        )
-    else:
-        target_type = "Total Revenue"
-        st.text_input("Revenue target", value="Total Revenue", disabled=True)
+    target_type = st.selectbox(
+        "Revenue target",
+        ["Total Revenue", "New Customer Revenue", "Returning Customer Revenue"],
+        index=0,
+        help="Which revenue metric to model. 'New Customer Revenue' is recommended "
+             "for evaluating paid media effectiveness."
+    )
 
 target_col_map = {
     "Total Revenue": "revenue",
@@ -83,26 +72,32 @@ target_col_map = {
 
 st.markdown("#### Revenue Data")
 st.markdown(
-    "Upload a weekly Shopify analytics export (**Sales over time**). "
+    "Upload weekly Shopify analytics exports (**Sales over time**) for "
+    "**new customers** and **returning customers** separately. "
     "Expected columns: `Week`, `Total returns`, `Net sales`."
 )
 
-rev_file = st.file_uploader("Shopify sales CSV", type="csv", key="revenue_csv")
+rev_col1, rev_col2 = st.columns(2)
+with rev_col1:
+    new_cust_file = st.file_uploader("New customers CSV", type="csv", key="new_cust_csv")
+with rev_col2:
+    ret_cust_file = st.file_uploader("Returning customers CSV", type="csv", key="ret_cust_csv")
 
-# Process uploaded revenue CSV and save to data/ for persistence
+# Process uploaded revenue CSVs and save to data/ for persistence
 revenue_updated = False
-if rev_file:
+if new_cust_file and ret_cust_file:
     try:
-        raw_df = pd.read_csv(rev_file)
-        revenue_df = process_revenue_csv(raw_df)
+        new_df = pd.read_csv(new_cust_file)
+        ret_df = pd.read_csv(ret_cust_file)
+        revenue_df = process_revenue_csvs(new_df, ret_df)
         # Save to data/ so the model run can use it
         rev_csv_path = Path(__file__).parent.parent / "data" / f"{selected_client}_shopify_weekly.csv"
         revenue_df.to_csv(rev_csv_path, index=False)
         st.success(f"Revenue data processed: {len(revenue_df)} weeks, total revenue {revenue_df['revenue'].sum():,.0f} SEK")
         revenue_updated = True
     except Exception as e:
-        st.error(f"Error processing revenue CSV: {e}")
-        st.info("Make sure the file has columns: Week, Total returns, Net sales")
+        st.error(f"Error processing revenue CSVs: {e}")
+        st.info("Make sure each file has columns: Week, Total returns, Net sales")
 
 # Check if pre-built revenue CSV exists
 rev_csv_path = Path(__file__).parent.parent / "data" / f"{selected_client}_shopify_weekly.csv"
