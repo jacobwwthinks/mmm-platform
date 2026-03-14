@@ -64,11 +64,27 @@ def assess_model_quality(results) -> dict:
             checks[f"contribution_{col}"] = {"value": pct, "status": "warning",
                                              "note": f"{col} accounts for {pct:.0f}% of revenue — suspiciously high"}
 
-    # 5. ROAS reasonableness
+    # 5. ROAS reasonableness + low-spend flagging
+    total_all_spend = results.channel_roas["total_spend"].sum()
     for _, row in results.channel_roas.iterrows():
         roas = row["roas_mean"]
         ci_width = row["roas_95"] - row["roas_5"]
         channel = row["channel"]
+        spend = row["total_spend"]
+        spend_share = spend / (total_all_spend + 1e-8) * 100
+
+        # Flag channels with very small spend (< 5% of total)
+        if spend_share < 5 and spend > 0:
+            checks[f"low_spend_{channel}"] = {
+                "value": spend_share,
+                "status": "warning",
+                "note": (
+                    f"{channel} represents only {spend_share:.1f}% of total spend "
+                    f"({spend:,.0f} SEK). ROAS of {roas:.1f}x is unreliable at "
+                    f"this scale — the model has very little data to estimate "
+                    f"its true effect."
+                ),
+            }
 
         if roas > 20:
             checks[f"roas_{channel}"] = {"value": roas, "status": "warning",

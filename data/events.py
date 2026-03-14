@@ -67,9 +67,12 @@ def load_events(csv_path: str) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Events CSV missing columns: {missing}")
 
-    # Ensure binary values
+    # Ensure integer values (discount_campaign can be 0/1/2 for light/heavy)
     for col in ["discount_campaign", "product_drop", "holiday"]:
-        df[col] = df[col].fillna(0).astype(int).clip(0, 1)
+        if col in df.columns:
+            df[col] = df[col].fillna(0).astype(int)
+    if "product_offering" in df.columns:
+        df["product_offering"] = df["product_offering"].fillna(0).astype(int)
 
     logger.info(f"Loaded {len(df)} event weeks from {csv_path}")
     logger.info(f"  Discount campaigns: {df['discount_campaign'].sum()} weeks")

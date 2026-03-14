@@ -17,7 +17,7 @@ import logging
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.ingest import fetch_client_data, load_config
+from data.ingest import fetch_client_data, load_config, process_revenue_csvs
 from data.process import merge_channel_data, prepare_model_input, get_spend_columns
 from data.events import load_events, generate_event_template
 from model.mmm import create_model, MMMResults
@@ -68,6 +68,43 @@ target_col_map = {
     "Returning Customer Revenue": "returning_revenue",
 }
 
+# ── Revenue Data Upload ─────────────────────────────────────
+
+st.markdown("#### Revenue Data")
+st.markdown(
+    "Upload weekly Shopify analytics exports (Net Sales Over Time) for "
+    "**new customers** and **returning customers**. Expected columns: `Week`, `Total returns`, `Net sales`."
+)
+
+rev_col1, rev_col2 = st.columns(2)
+with rev_col1:
+    new_cust_file = st.file_uploader("New customers CSV", type="csv", key="new_cust_csv")
+with rev_col2:
+    ret_cust_file = st.file_uploader("Returning customers CSV", type="csv", key="ret_cust_csv")
+
+# Process uploaded revenue CSVs and save to data/ for persistence
+revenue_updated = False
+if new_cust_file and ret_cust_file:
+    try:
+        new_df = pd.read_csv(new_cust_file)
+        ret_df = pd.read_csv(ret_cust_file)
+        revenue_df = process_revenue_csvs(new_df, ret_df)
+        # Save to data/ so the model run can use it
+        rev_csv_path = Path(__file__).parent.parent / "data" / f"{selected_client}_shopify_weekly.csv"
+        revenue_df.to_csv(rev_csv_path, index=False)
+        st.success(f"Revenue data processed: {len(revenue_df)} weeks, total revenue {revenue_df['revenue'].sum():,.0f} SEK")
+        revenue_updated = True
+    except Exception as e:
+        st.error(f"Error processing revenue CSVs: {e}")
+        st.info("Make sure each file has columns: Week, Total returns, Net sales")
+
+# Check if pre-built revenue CSV exists
+rev_csv_path = Path(__file__).parent.parent / "data" / f"{selected_client}_shopify_weekly.csv"
+if not revenue_updated and rev_csv_path.exists():
+    st.caption(f"Using existing revenue data from `{rev_csv_path.name}`")
+elif not revenue_updated:
+    st.warning("No revenue data available. Upload Shopify analytics CSVs above.")
+
 # ── Run Model ────────────────────────────────────────────────
 
 run_clicked = st.button("Fetch Data & Run Model", type="primary", use_container_width=True)
@@ -75,7 +112,7 @@ run_clicked = st.button("Fetch Data & Run Model", type="primary", use_container_
 results_dir = Path(f"results/{selected_client}")
 
 if run_clicked:
-    with st.spinner("Fetching data from Windsor.ai..."):
+    with st.spinner("Fetching channel data..."):
         try:
             raw_data = fetch_client_data(
                 selected_client, config,
@@ -334,23 +371,45 @@ st.plotly_chart(fig_ts, use_container_width=True)
 st.subheader("Channel ROAS")
 
 roas_display = results.channel_roas.copy()
-roas_display["channel"] = roas_display["channel"].str.replace("_", " ").str.title()
-roas_display["total_spend"] = roas_display["total_spend"].apply(lambda x: f"{x:,.0f}")
+total_all_spend = roas_display["total_spend"].sum()
+
+# Flag low-spend channels (< 5% of total spend)
+roas_display["spend_share"] = roas_display["total_spend"] / (total_all_spend + 1e-8) * 100
+roas_display["is_low_spend"] = roas_display["spend_share"] < 5
+
+# Format display columns
+roas_display["channel_display"] = roas_display.apply(
+    lambda r: r["channel"].replace("_", " ").title() + " *" if r["is_low_spend"] else r["channel"].replace("_", " ").title(),
+    axis=1,
+)
+roas_display["spend_display"] = roas_display.apply(
+    lambda r: f"{r['total_spend']:,.0f} ({r['spend_share']:.1f}%)", axis=1
+)
 roas_display["total_contribution"] = roas_display["total_contribution"].apply(lambda x: f"{x:,.0f}")
 roas_display["90% CI"] = roas_display.apply(lambda r: f"{r['roas_5']:.2f} – {r['roas_95']:.2f}", axis=1)
-roas_display["roas_mean"] = roas_display["roas_mean"].apply(lambda x: f"{x:.2f}x")
+roas_display["roas_display"] = roas_display["roas_mean"].apply(lambda x: f"{x:.2f}x")
 
 st.dataframe(
-    roas_display[["channel", "total_spend", "total_contribution", "roas_mean", "90% CI"]].rename(columns={
-        "channel": "Channel",
-        "total_spend": "Total Spend",
+    roas_display[["channel_display", "spend_display", "total_contribution", "roas_display", "90% CI"]].rename(columns={
+        "channel_display": "Channel",
+        "spend_display": "Total Spend",
         "total_contribution": "Attributed Revenue",
-        "roas_mean": "ROAS",
+        "roas_display": "ROAS",
         "90% CI": "90% Confidence Interval",
     }),
     hide_index=True,
     use_container_width=True,
 )
+
+# Show warning for low-spend channels
+low_spend_channels = roas_display[roas_display["is_low_spend"]]
+if not low_spend_channels.empty:
+    channel_names = ", ".join(low_spend_channels["channel"].str.replace("_", " ").str.title())
+    st.caption(
+        f"\\* **Low-spend channels ({channel_names})**: These channels represent less than "
+        f"5% of total ad spend. Their ROAS estimates are unreliable due to limited data — "
+        f"the model cannot confidently separate their effect from noise at this scale."
+    )
 
 # ── Model Quality ────────────────────────────────────────────
 

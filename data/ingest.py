@@ -160,16 +160,16 @@ def fetch_client_data(
             logger.warning(f"No {channel_name} CSV found at {channel_csv}")
             result[channel_name] = pd.DataFrame(columns=["week_start", "spend", "impressions", "clicks"])
 
-    # Load Shopify revenue data from pre-built CSV.
-    # Shopify order data is too large for Windsor's runtime size limits,
-    # so we pre-aggregate it offline and commit the CSV to the repo.
-    # To update: re-run the Windsor data pull locally and regenerate the CSV.
+    # Load revenue data from pre-built CSV.
+    # Revenue is sourced from a Shopify analytics export (not Windsor) and
+    # pre-processed into weekly gross sales (net sales + returns) with
+    # new/returning customer splits.
+    # To update: upload new/returning CSVs via the dashboard.
     shopify_csv = Path(__file__).parent / f"{client_key}_shopify_weekly.csv"
-    logger.info(f"  Shopify CSV path: {shopify_csv} (exists={shopify_csv.exists()})")
+    logger.info(f"  Revenue CSV path: {shopify_csv} (exists={shopify_csv.exists()})")
     if shopify_csv.exists():
         shopify_df = pd.read_csv(shopify_csv, parse_dates=["week_start"])
-        logger.info(f"  Shopify CSV raw: {len(shopify_df)} rows, cols={list(shopify_df.columns)}")
-        # Filter to requested date range (explicit Timestamp conversion for safety)
+        logger.info(f"  Revenue CSV: {len(shopify_df)} rows, cols={list(shopify_df.columns)}")
         dt_from = pd.Timestamp(date_from)
         dt_to = pd.Timestamp(date_to)
         shopify_df = shopify_df[
@@ -177,10 +177,10 @@ def fetch_client_data(
             & (shopify_df["week_start"] <= dt_to)
         ].copy()
         result["shopify"] = shopify_df
-        logger.info(f"  Shopify: {len(shopify_df)} weekly rows after date filter ({dt_from.date()} to {dt_to.date()})")
+        logger.info(f"  Revenue: {len(shopify_df)} weekly rows after date filter ({dt_from.date()} to {dt_to.date()})")
     else:
-        logger.warning(f"No Shopify CSV found at {shopify_csv}. Run data pull to generate it.")
-        result["shopify"] = pd.DataFrame(columns=["week_start", "revenue", "orders"])
+        logger.warning(f"No revenue CSV found at {shopify_csv}. Upload revenue data via the dashboard.")
+        result["shopify"] = pd.DataFrame(columns=["week_start", "revenue", "new_revenue", "returning_revenue", "orders"])
 
     # Fetch email data from Klaviyo (via Windsor) if configured
     # Klaviyo returns one row per campaign/flow per day.
@@ -227,3 +227,36 @@ def fetch_client_data(
         result["sms"] = sms_df
 
     return result
+
+
+def process_revenue_csvs(
+    new_customers_df: pd.DataFrame,
+    returning_customers_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Process Shopify analytics export CSVs (new + returning customers) into
+    weekly gross revenue (net sales + returns added back).
+
+    Expected input columns: Week, Total returns, Net sales
+    (as exported from Shopify analytics "Net Sales Over Time" report)
+
+    Returns DataFrame with: week_start, revenue, new_revenue, returning_revenue
+    """
+    new = new_customers_df[["Week", "Total returns", "Net sales"]].copy()
+    ret = returning_customers_df[["Week", "Total returns", "Net sales"]].copy()
+
+    # Gross sales = net sales + abs(returns).  Returns are negative, so subtract.
+    new["new_revenue"] = new["Net sales"] - new["Total returns"].fillna(0)
+    ret["returning_revenue"] = ret["Net sales"] - ret["Total returns"].fillna(0)
+
+    combined = new[["Week", "new_revenue"]].merge(
+        ret[["Week", "returning_revenue"]], on="Week", how="outer"
+    ).sort_values("Week").reset_index(drop=True).fillna(0)
+
+    combined["revenue"] = combined["new_revenue"] + combined["returning_revenue"]
+    combined = combined.rename(columns={"Week": "week_start"})
+    combined["week_start"] = pd.to_datetime(combined["week_start"])
+
+    logger.info(f"Processed revenue CSVs: {len(combined)} weeks, "
+                f"total revenue={combined['revenue'].sum():,.0f}")
+    return combined[["week_start", "revenue", "new_revenue", "returning_revenue"]]
