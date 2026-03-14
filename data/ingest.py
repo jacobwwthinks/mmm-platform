@@ -182,41 +182,23 @@ def fetch_client_data(
         logger.warning(f"No revenue CSV found at {shopify_csv}. Upload revenue data via the dashboard.")
         result["shopify"] = pd.DataFrame(columns=["week_start", "revenue", "new_revenue", "returning_revenue", "orders"])
 
-    # Fetch email data from Klaviyo (via Windsor) if configured
-    # Klaviyo returns one row per campaign/flow per day.
-    # We aggregate to daily totals (opens, clicks, revenue).
-    # Opens serve as the "reach" proxy since Windsor/Klaviyo doesn't expose sends.
-    email_cfg = client_cfg.get("email_source", {})
-    email_account = email_cfg.get("windsor_account")
-    if email_account:
-        try:
-            ingester = WindsorIngester(api_key=api_key)
-            df = ingester.fetch_channel_data(
-                connector=email_cfg["windsor_connector"],
-                account_id=email_account,
-                date_from=date_from,
-                date_to=date_to,
-                fields=[
-                    "date",
-                    email_cfg.get("opens_field", "opens"),
-                    email_cfg.get("clicks_field", "clicks"),
-                    email_cfg.get("revenue_field", "revenue"),
-                ],
-            )
-            # Aggregate across all campaigns/flows per day
-            if not df.empty and "date" in df.columns:
-                df = df.groupby("date").agg(
-                    email_opens=(email_cfg.get("opens_field", "opens"), "sum"),
-                    email_clicks=(email_cfg.get("clicks_field", "clicks"), "sum"),
-                    email_revenue=(email_cfg.get("revenue_field", "revenue"), "sum"),
-                ).reset_index()
-            else:
-                df = pd.DataFrame(columns=["date", "email_opens", "email_clicks", "email_revenue"])
-
-            result["email"] = df
-            logger.info(f"  Email/Klaviyo data: {len(df)} daily rows")
-        except Exception as e:
-            logger.warning(f"Could not fetch Klaviyo data: {e}. Email will be excluded from model.")
+    # Load email/Klaviyo data from pre-built weekly CSV.
+    # Like ad spend, Klaviyo data is pre-aggregated offline (via Windsor MCP)
+    # and committed to the repo so the deployed app doesn't need API keys.
+    # Opens serve as the "reach" proxy since Klaviyo doesn't have a spend metric.
+    klaviyo_csv = Path(__file__).parent / f"{client_key}_klaviyo_weekly.csv"
+    if klaviyo_csv.exists():
+        klaviyo_df = pd.read_csv(klaviyo_csv, parse_dates=["week_start"])
+        dt_from = pd.Timestamp(date_from)
+        dt_to = pd.Timestamp(date_to)
+        klaviyo_df = klaviyo_df[
+            (klaviyo_df["week_start"] >= dt_from)
+            & (klaviyo_df["week_start"] <= dt_to)
+        ].copy()
+        result["email"] = klaviyo_df
+        logger.info(f"  Email/Klaviyo: {len(klaviyo_df)} weekly rows from CSV")
+    else:
+        logger.info(f"  No Klaviyo CSV at {klaviyo_csv}. Email will be excluded from model.")
 
     # Load SMS spend from CSV if available
     sms_csv = client_cfg.get("sms_csv")
@@ -229,34 +211,56 @@ def fetch_client_data(
     return result
 
 
+def process_revenue_csv(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Process a Shopify analytics export CSV into weekly gross revenue
+    (net sales + returns added back).
+
+    Expected input columns: Week, Total returns, Net sales
+    (as exported from Shopify analytics "Sales over time" report)
+
+    Gross sales = Net sales - Total returns
+    (Returns are negative in the export, so subtracting adds them back.)
+
+    Returns DataFrame with: week_start, revenue
+    """
+    required_cols = {"Week", "Total returns", "Net sales"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"Missing columns: {missing}. "
+            f"Expected: Week, Total returns, Net sales. "
+            f"Got: {list(df.columns)}"
+        )
+
+    out = df[["Week", "Total returns", "Net sales"]].copy()
+    out["revenue"] = out["Net sales"] - out["Total returns"].fillna(0)
+
+    out = out.rename(columns={"Week": "week_start"})
+    out["week_start"] = pd.to_datetime(out["week_start"])
+    out = out[["week_start", "revenue"]].sort_values("week_start").reset_index(drop=True)
+
+    logger.info(f"Processed revenue CSV: {len(out)} weeks, "
+                f"total revenue={out['revenue'].sum():,.0f}")
+    return out
+
+
+# Backwards-compatible alias for old two-CSV flow
 def process_revenue_csvs(
     new_customers_df: pd.DataFrame,
     returning_customers_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Process Shopify analytics export CSVs (new + returning customers) into
-    weekly gross revenue (net sales + returns added back).
-
-    Expected input columns: Week, Total returns, Net sales
-    (as exported from Shopify analytics "Net Sales Over Time" report)
-
-    Returns DataFrame with: week_start, revenue, new_revenue, returning_revenue
-    """
+    """Legacy: merge two CSVs (new + returning). Prefer process_revenue_csv() instead."""
     new = new_customers_df[["Week", "Total returns", "Net sales"]].copy()
     ret = returning_customers_df[["Week", "Total returns", "Net sales"]].copy()
-
-    # Gross sales = net sales + abs(returns).  Returns are negative, so subtract.
     new["new_revenue"] = new["Net sales"] - new["Total returns"].fillna(0)
     ret["returning_revenue"] = ret["Net sales"] - ret["Total returns"].fillna(0)
-
     combined = new[["Week", "new_revenue"]].merge(
         ret[["Week", "returning_revenue"]], on="Week", how="outer"
     ).sort_values("Week").reset_index(drop=True).fillna(0)
-
     combined["revenue"] = combined["new_revenue"] + combined["returning_revenue"]
     combined = combined.rename(columns={"Week": "week_start"})
     combined["week_start"] = pd.to_datetime(combined["week_start"])
-
-    logger.info(f"Processed revenue CSVs: {len(combined)} weeks, "
-                f"total revenue={combined['revenue'].sum():,.0f}")
     return combined[["week_start", "revenue", "new_revenue", "returning_revenue"]]

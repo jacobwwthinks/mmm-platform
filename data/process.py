@@ -134,7 +134,13 @@ def merge_channel_data(
     # Email opens serve as the "volume" metric since Klaviyo doesn't have a spend metric.
     # In the MMM, email_opens is treated like an impression/reach variable.
     if "email" in raw_data and not raw_data["email"].empty:
-        email_weekly = daily_to_weekly(raw_data["email"])
+        email_df = raw_data["email"].copy()
+        # Klaviyo data may arrive pre-aggregated to weekly (from CSV) or daily
+        if "week_start" in email_df.columns:
+            email_weekly = email_df
+            email_weekly["week_start"] = pd.to_datetime(email_weekly["week_start"])
+        else:
+            email_weekly = daily_to_weekly(email_df)
         # email_opens becomes the model input; email_clicks and email_revenue kept for reference
         result = result.merge(email_weekly, on="week_start", how="left")
         for col in ["email_opens", "email_clicks", "email_revenue"]:
