@@ -162,9 +162,21 @@ class MMMResults:
 
     @classmethod
     def load(cls, path: str) -> "MMMResults":
-        """Load results from disk."""
-        with open(f"{path}/results.pkl", "rb") as f:
-            return pickle.load(f)
+        """Load results from disk. Returns None if file is missing or corrupt."""
+        pkl_path = f"{path}/results.pkl"
+        try:
+            with open(pkl_path, "rb") as f:
+                return pickle.load(f)
+        except (EOFError, pickle.UnpicklingError, Exception) as e:
+            logger.warning(f"Could not load results from {pkl_path}: {e}")
+            # Remove corrupt file so we don't keep hitting this
+            import os
+            try:
+                os.remove(pkl_path)
+                logger.info(f"Removed corrupt results file: {pkl_path}")
+            except OSError:
+                pass
+            return None
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -186,7 +186,8 @@ if run_clicked:
 results = st.session_state.get("mmm_results")
 if results is None and (results_dir / "results.pkl").exists():
     results = MMMResults.load(str(results_dir))
-    st.session_state["mmm_results"] = results
+    if results is not None:
+        st.session_state["mmm_results"] = results
 
 # ── Revenue-only dashboard (when no ad data is available) ────
 
