@@ -40,19 +40,22 @@ def geometric_adstock(x: np.ndarray, decay: float, max_lag: int = 8) -> np.ndarr
     Simulates the carryover effect: an ad seen this week still has
     a decaying effect in subsequent weeks.
 
+    Uses a single-pass recursive formula: adstock[t] = x[t] + decay * adstock[t-1]
+    which is equivalent to the lagged sum but O(T) instead of O(T * max_lag).
+
     Args:
         x: Spend time series (T,)
         decay: Decay rate 0-1 (higher = longer memory)
-        max_lag: Maximum number of weeks to carry over
+        max_lag: Maximum number of weeks to carry over (kept for API compat)
 
     Returns:
         Transformed series with carryover effects
     """
     T = len(x)
-    result = np.zeros(T)
-    for t in range(T):
-        for lag in range(min(max_lag, t + 1)):
-            result[t] += x[t - lag] * (decay ** lag)
+    result = np.empty(T)
+    result[0] = x[0]
+    for t in range(1, T):
+        result[t] = x[t] + decay * result[t - 1]
     return result
 
 
@@ -366,7 +369,7 @@ class LightweightMMM:
                 x_init = x0 + np.random.randn(n_params) * 0.3
             try:
                 res = minimize(loss, x_init, method="L-BFGS-B",
-                             options={"maxiter": 3000, "disp": False})
+                             options={"maxiter": 2000, "disp": False})
                 if res.fun < best_loss:
                     best_loss = res.fun
                     best_result = res
@@ -379,9 +382,10 @@ class LightweightMMM:
 
         best_params = best_result.x
 
-        # Bootstrap for uncertainty quantification (reduced to 50 for speed)
-        n_bootstrap = 50
+        # Bootstrap for uncertainty quantification
+        n_bootstrap = 25
         bootstrap_params = []
+        logger.info(f"Running {n_bootstrap} bootstrap iterations...")
         for b in range(n_bootstrap):
             idx_boot = np.random.choice(T, size=T, replace=True)
             y_boot = y[idx_boot]
@@ -420,7 +424,7 @@ class LightweightMMM:
 
             try:
                 res_boot = minimize(loss_boot, best_params, method="L-BFGS-B",
-                                  options={"maxiter": 300, "disp": False})
+                                  options={"maxiter": 200, "disp": False})
                 bootstrap_params.append(res_boot.x)
             except Exception:
                 bootstrap_params.append(best_params)
