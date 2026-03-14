@@ -30,6 +30,26 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
 .js-plotly-plot .plotly .main-svg {
     background: transparent !important;
 }
+
+/* Rename "app" to "Home" in sidebar navigation */
+[data-testid="stSidebarNav"] li:first-child a span {
+    visibility: hidden;
+    position: relative;
+}
+[data-testid="stSidebarNav"] li:first-child a span::after {
+    content: "Home";
+    visibility: visible;
+    position: absolute;
+    left: 0;
+}
+
+/* Lighter heading weight — less clunky bold */
+h1, h2, h3 {
+    font-weight: 500 !important;
+}
+h4, h5, h6 {
+    font-weight: 500 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
