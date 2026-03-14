@@ -179,10 +179,16 @@ if run_clicked:
 # ── Load existing results ────────────────────────────────────
 
 results = st.session_state.get("mmm_results")
-if results is None and (results_dir / "results.pkl").exists():
-    results = MMMResults.load(str(results_dir))
-    if results is not None:
-        st.session_state["mmm_results"] = results
+if results is None:
+    # Try relative path first, then absolute path from project root
+    for base in [Path("."), Path(__file__).parent.parent]:
+        candidate = base / "results" / selected_client
+        if (candidate / "results.pkl").exists():
+            results = MMMResults.load(str(candidate))
+            if results is not None:
+                results_dir = candidate
+                st.session_state["mmm_results"] = results
+                break
 
 # ── Revenue-only dashboard (when no ad data is available) ────
 
@@ -373,29 +379,35 @@ st.plotly_chart(fig_ts, use_container_width=True)
 st.subheader("Channel ROAS")
 
 roas_display = results.channel_roas.copy()
-total_all_spend = roas_display["total_spend"].sum()
 
-# Flag low-spend channels (< 5% of total spend)
-roas_display["spend_share"] = roas_display["total_spend"] / (total_all_spend + 1e-8) * 100
-roas_display["is_low_spend"] = roas_display["spend_share"] < 5
+# Separate email (uses opens, not spend) from paid channels
+is_email = roas_display["channel"] == "email"
+paid_display = roas_display[~is_email].copy()
+email_display = roas_display[is_email].copy()
 
-# Format display columns
-roas_display["channel_display"] = roas_display.apply(
+total_paid_spend = paid_display["total_spend"].sum()
+
+# Flag low-spend channels (< 5% of total paid spend)
+paid_display["spend_share"] = paid_display["total_spend"] / (total_paid_spend + 1e-8) * 100
+paid_display["is_low_spend"] = paid_display["spend_share"] < 5
+
+# Format display columns for paid channels
+paid_display["channel_display"] = paid_display.apply(
     lambda r: r["channel"].replace("_", " ").title() + " *" if r["is_low_spend"] else r["channel"].replace("_", " ").title(),
     axis=1,
 )
-roas_display["spend_display"] = roas_display.apply(
+paid_display["spend_display"] = paid_display.apply(
     lambda r: f"{r['total_spend']:,.0f} ({r['spend_share']:.1f}%)", axis=1
 )
-roas_display["total_contribution"] = roas_display["total_contribution"].apply(lambda x: f"{x:,.0f}")
-roas_display["90% CI"] = roas_display.apply(lambda r: f"{r['roas_5']:.2f} – {r['roas_95']:.2f}", axis=1)
-roas_display["roas_display"] = roas_display["roas_mean"].apply(lambda x: f"{x:.2f}x")
+paid_display["contribution_display"] = paid_display["total_contribution"].apply(lambda x: f"{x:,.0f}")
+paid_display["90% CI"] = paid_display.apply(lambda r: f"{r['roas_5']:.2f} – {r['roas_95']:.2f}", axis=1)
+paid_display["roas_display"] = paid_display["roas_mean"].apply(lambda x: f"{x:.2f}x")
 
 st.dataframe(
-    roas_display[["channel_display", "spend_display", "total_contribution", "roas_display", "90% CI"]].rename(columns={
+    paid_display[["channel_display", "spend_display", "contribution_display", "roas_display", "90% CI"]].rename(columns={
         "channel_display": "Channel",
         "spend_display": "Total Spend",
-        "total_contribution": "Attributed Revenue",
+        "contribution_display": "Attributed Revenue",
         "roas_display": "ROAS",
         "90% CI": "90% Confidence Interval",
     }),
@@ -404,13 +416,27 @@ st.dataframe(
 )
 
 # Show warning for low-spend channels
-low_spend_channels = roas_display[roas_display["is_low_spend"]]
+low_spend_channels = paid_display[paid_display["is_low_spend"]]
 if not low_spend_channels.empty:
     channel_names = ", ".join(low_spend_channels["channel"].str.replace("_", " ").str.title())
     st.caption(
         f"\\* **Low-spend channels ({channel_names})**: These channels represent less than "
         f"5% of total ad spend. Their ROAS estimates are unreliable due to limited data — "
         f"the model cannot confidently separate their effect from noise at this scale."
+    )
+
+# Show email separately (no ROAS since opens ≠ spend)
+if not email_display.empty:
+    st.markdown("**Email (Klaviyo)**")
+    email_row = email_display.iloc[0]
+    ecol1, ecol2 = st.columns(2)
+    with ecol1:
+        st.metric("Total Opens (model input)", f"{email_row['total_spend']:,.0f}")
+    with ecol2:
+        st.metric("Attributed Revenue", f"{email_row['total_contribution']:,.0f}")
+    st.caption(
+        "Email uses weekly opens as the media variable (not spend), so ROAS is not applicable. "
+        "The attributed revenue reflects the model's estimate of revenue driven by email activity."
     )
 
 # ── Model Quality ────────────────────────────────────────────

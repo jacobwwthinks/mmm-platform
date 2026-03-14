@@ -106,9 +106,9 @@ if not events_df.empty:
 
     with tab_events:
         event_weeks = events_df[
-            (events_df["discount_campaign"] == 1) |
-            (events_df["product_drop"] == 1) |
-            (events_df["holiday"] == 1)
+            (events_df["discount_campaign"] > 0) |
+            (events_df["product_drop"] > 0) |
+            (events_df["holiday"] > 0)
         ].copy()
 
         if event_weeks.empty:
@@ -116,9 +116,9 @@ if not events_df.empty:
         else:
             st.dataframe(
                 event_weeks.style.apply(
-                    lambda row: ["background-color: #fff3cd" if row["discount_campaign"] == 1
-                                else "background-color: #d4edda" if row["product_drop"] == 1
-                                else "background-color: #cce5ff" if row["holiday"] == 1
+                    lambda row: ["background-color: #fff3cd" if row["discount_campaign"] > 0
+                                else "background-color: #d4edda" if row["product_drop"] > 0
+                                else "background-color: #cce5ff" if row["holiday"] > 0
                                 else "" for _ in row],
                     axis=1,
                 ),
@@ -132,7 +132,7 @@ if not events_df.empty:
             num_rows="dynamic",
             column_config={
                 "week_start": st.column_config.DateColumn("Week Start", format="YYYY-MM-DD"),
-                "discount_campaign": st.column_config.CheckboxColumn("Discount"),
+                "discount_campaign": st.column_config.NumberColumn("Discount", min_value=0, max_value=2, help="0=none, 1=light, 2=heavy"),
                 "product_drop": st.column_config.CheckboxColumn("Drop"),
                 "holiday": st.column_config.CheckboxColumn("Holiday"),
                 "notes": st.column_config.TextColumn("Notes"),
@@ -157,7 +157,7 @@ if not events_df.empty:
         ("product_drop", "#59A14F", "Product Drops"),
         ("holiday", "#76B7B2", "Holidays"),
     ]:
-        mask = events_df[event_type] == 1
+        mask = events_df[event_type] > 0
         if mask.any():
             fig.add_trace(go.Scatter(
                 x=events_df.loc[mask, "week_start"],
@@ -190,8 +190,8 @@ if not events_df.empty:
     with col1:
         st.metric("Total Weeks", len(events_df))
     with col2:
-        st.metric("Discount Weeks", int(events_df["discount_campaign"].sum()))
+        st.metric("Discount Weeks", int((events_df["discount_campaign"] > 0).sum()))
     with col3:
-        st.metric("Product Drops", int(events_df["product_drop"].sum()))
+        st.metric("Product Drops", int((events_df["product_drop"] > 0).sum()))
     with col4:
-        st.metric("Holiday Weeks", int(events_df["holiday"].sum()))
+        st.metric("Holiday Weeks", int((events_df["holiday"] > 0).sum()))

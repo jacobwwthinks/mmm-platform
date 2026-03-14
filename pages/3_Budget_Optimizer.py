@@ -31,9 +31,15 @@ st.title("Budget Optimizer")
 
 results = st.session_state.get("mmm_results")
 if results is None:
-    results_dir = Path(f"results/{st.session_state.get('selected_client', 'juniper')}")
-    if (results_dir / "results.pkl").exists():
-        results = MMMResults.load(str(results_dir))
+    # Try relative path first, then absolute path from project root
+    selected_client = st.session_state.get("selected_client", "juniper")
+    for base in [Path("."), Path(__file__).parent.parent]:
+        results_dir = base / "results" / selected_client
+        if (results_dir / "results.pkl").exists():
+            results = MMMResults.load(str(results_dir))
+            if results is not None:
+                st.session_state["mmm_results"] = results
+                break
 
 if results is None:
     st.markdown("### Ad platform data required")

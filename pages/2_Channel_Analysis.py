@@ -35,9 +35,15 @@ st.title("Channel Analysis")
 
 results = st.session_state.get("mmm_results")
 if results is None:
-    results_dir = Path(f"results/{st.session_state.get('selected_client', 'juniper')}")
-    if (results_dir / "results.pkl").exists():
-        results = MMMResults.load(str(results_dir))
+    # Try relative path first, then absolute path from project root
+    selected_client = st.session_state.get("selected_client", "juniper")
+    for base in [Path("."), Path(__file__).parent.parent]:
+        results_dir = base / "results" / selected_client
+        if (results_dir / "results.pkl").exists():
+            results = MMMResults.load(str(results_dir))
+            if results is not None:
+                st.session_state["mmm_results"] = results
+                break
 
 if results is None:
     st.markdown("### Ad platform data required")
@@ -59,23 +65,26 @@ if results is None:
 st.subheader("Channel ROAS Comparison")
 
 roas_df = results.channel_roas.copy()
-roas_df["channel_display"] = roas_df["channel"].str.replace("_", " ").str.title()
+
+# Only show ROAS for paid channels (email uses opens, not spend)
+paid_roas_df = roas_df[roas_df["channel"] != "email"].copy()
+paid_roas_df["channel_display"] = paid_roas_df["channel"].str.replace("_", " ").str.title()
 
 fig_roas = go.Figure()
 
 # Error bars showing 90% CI
 fig_roas.add_trace(go.Bar(
-    x=roas_df["channel_display"],
-    y=roas_df["roas_mean"],
+    x=paid_roas_df["channel_display"],
+    y=paid_roas_df["roas_mean"],
     error_y=dict(
         type="data",
         symmetric=False,
-        array=roas_df["roas_95"] - roas_df["roas_mean"],
-        arrayminus=roas_df["roas_mean"] - roas_df["roas_5"],
+        array=paid_roas_df["roas_95"] - paid_roas_df["roas_mean"],
+        arrayminus=paid_roas_df["roas_mean"] - paid_roas_df["roas_5"],
         color="rgba(230,237,243,0.3)",
     ),
-    marker_color=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"][:len(roas_df)],
-    text=[f"{r:.2f}x" for r in roas_df["roas_mean"]],
+    marker_color=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"][:len(paid_roas_df)],
+    text=[f"{r:.2f}x" for r in paid_roas_df["roas_mean"]],
     textposition="outside",
 ))
 
@@ -87,6 +96,15 @@ fig_roas.update_layout(
     **PLOTLY_LAYOUT,
 )
 st.plotly_chart(fig_roas, use_container_width=True)
+
+# Note about email
+email_roas = roas_df[roas_df["channel"] == "email"]
+if not email_roas.empty:
+    email_row = email_roas.iloc[0]
+    st.caption(
+        f"Email (Klaviyo) is excluded from the ROAS chart — it uses opens as the media variable, not spend. "
+        f"Attributed revenue from email: **{email_row['total_contribution']:,.0f}**."
+    )
 
 # ── Channel Selector ─────────────────────────────────────────
 

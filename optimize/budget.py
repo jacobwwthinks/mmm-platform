@@ -42,7 +42,8 @@ def optimize_budget(
     contrib_df = results.channel_contributions
     n_weeks = results.n_weeks
 
-    channels = list(params.keys())
+    # Only optimize paid channels (exclude email — uses opens, not spend)
+    channels = [ch for ch in params.keys() if ch != "email"]
     n_channels = len(channels)
 
     # Current weekly spend per channel
@@ -141,7 +142,8 @@ def scenario_analysis(
         DataFrame with budget level and expected revenue for each scenario
     """
     params = results.channel_params
-    channels = list(params.keys())
+    # Only include paid channels (exclude email — uses opens, not spend)
+    channels = [ch for ch in params.keys() if ch != "email"]
     roas_df = results.channel_roas
     n_weeks = results.n_weeks
 
