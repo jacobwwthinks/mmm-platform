@@ -168,9 +168,9 @@ if run_clicked:
                 model = create_model(config.get("model", {}))
                 results = model.fit(model_df, target_col=target)
 
-                # Save results
+                # Save results (including model_df for seasonal indices)
                 results_dir.mkdir(parents=True, exist_ok=True)
-                results.save(str(results_dir))
+                results.save(str(results_dir), model_df=model_df)
                 st.session_state["mmm_results"] = results
                 st.session_state["revenue_only"] = False
 

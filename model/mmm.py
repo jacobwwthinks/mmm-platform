@@ -124,6 +124,7 @@ class MMMResults:
     spend_columns: list = None
     date_range: tuple = None
     n_weeks: int = 0
+    target_col: str = "revenue"            # What the model was fit on
 
     def summary(self) -> str:
         """Human-readable summary of results."""
@@ -152,8 +153,8 @@ class MMMResults:
             lines.append(f"  {col:20s}: {pct:.1f}%")
         return "\n".join(lines)
 
-    def save(self, path: str):
-        """Save results to disk."""
+    def save(self, path: str, model_df: Optional[pd.DataFrame] = None):
+        """Save results to disk, optionally including the model DataFrame."""
         Path(path).mkdir(parents=True, exist_ok=True)
         self.channel_contributions.to_csv(f"{path}/channel_contributions.csv", index=False)
         self.channel_roas.to_csv(f"{path}/channel_roas.csv", index=False)
@@ -161,6 +162,10 @@ class MMMResults:
             json.dump(self.channel_params, f, indent=2, default=str)
         with open(f"{path}/results.pkl", "wb") as f:
             pickle.dump(self, f)
+        if model_df is not None:
+            with open(f"{path}/model_df.pkl", "wb") as f:
+                pickle.dump(model_df, f)
+            logger.info(f"Model DataFrame saved ({len(model_df)} rows)")
         logger.info(f"Results saved to {path}/")
 
     @classmethod
@@ -169,7 +174,11 @@ class MMMResults:
         pkl_path = f"{path}/results.pkl"
         try:
             with open(pkl_path, "rb") as f:
-                return pickle.load(f)
+                results = pickle.load(f)
+            # Backcompat: add target_col if missing (old pickles)
+            if not hasattr(results, "target_col"):
+                results.target_col = "revenue"
+            return results
         except (EOFError, pickle.UnpicklingError, Exception) as e:
             logger.warning(f"Could not load results from {pkl_path}: {e}")
             # Remove corrupt file so we don't keep hitting this
@@ -179,6 +188,16 @@ class MMMResults:
                 logger.info(f"Removed corrupt results file: {pkl_path}")
             except OSError:
                 pass
+            return None
+
+    @classmethod
+    def load_model_df(cls, path: str) -> Optional[pd.DataFrame]:
+        """Load persisted model_df from disk. Returns None if not available."""
+        df_path = f"{path}/model_df.pkl"
+        try:
+            with open(df_path, "rb") as f:
+                return pickle.load(f)
+        except Exception:
             return None
 
 
@@ -548,6 +567,7 @@ class LightweightMMM:
             spend_columns=spend_cols,
             date_range=(str(df["week_start"].min().date()), str(df["week_start"].max().date())),
             n_weeks=T,
+            target_col=target_col,
         )
 
         logger.info(f"Model fit complete: R²={r_squared:.3f}, MAPE={mape:.1f}%")
