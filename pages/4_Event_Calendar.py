@@ -244,7 +244,7 @@ if "product_offering" not in fwd_df.columns:
 
 # Column order for editor
 edit_cols = ["week_start", "discount_campaign", "product_drop", "product_offering", "holiday", "notes"]
-fwd_edit = fwd_df[edit_cols].copy()
+fwd_edit = fwd_df[edit_cols].copy().reset_index(drop=True)
 
 edited_fwd = st.data_editor(
     fwd_edit,
