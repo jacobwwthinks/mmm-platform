@@ -8,7 +8,12 @@ lightweight PyMC-based fallback.
 The model decomposes revenue into:
     revenue = baseline + trend + seasonality + sum(channel_effects) + sum(control_effects) + noise
 
-Where each channel_effect = beta * saturation(adstock(spend))
+Where each channel_effect = (beta + beta_event * heavy_discount) * saturation(adstock(spend))
+
+The channel × event interaction terms allow each channel's effectiveness to
+scale up during heavy discount / Black Week periods. Without this, the model
+can only add a flat offset for discount weeks, missing the multiplicative
+effect (ads convert much better when combined with heavy promotions).
 
 All internal computations happen in z-score (normalized) space so that
 the channel beta priors (~0.1-0.5) represent fractions of revenue's
@@ -271,12 +276,26 @@ class LightweightMMM:
         control_matrix = np.column_stack([df[col].values.astype(float) for col in control_cols]) \
             if control_cols else np.zeros((T, 0))
 
+        # Heavy discount indicator for channel × event interactions
+        # During heavy discount weeks (Black Week etc), conversion rates surge —
+        # the same ad spend generates much more revenue. This interaction term
+        # lets each channel's beta scale up during these periods.
+        heavy_discount = np.zeros(T)
+        if "discount_campaign" in df.columns:
+            heavy_discount = (df["discount_campaign"].values >= 2).astype(float)
+        n_heavy_weeks = int(heavy_discount.sum())
+        has_event_interactions = n_heavy_weeks >= 2  # need at least 2 weeks to fit
+        logger.info(f"Heavy discount weeks: {n_heavy_weeks} — "
+                    f"event interactions {'enabled' if has_event_interactions else 'disabled (too few weeks)'}")
+
         # Time index for linear trend (normalized 0 to 1)
         time_index = np.linspace(0, 1, T)
 
         # Seasonality features (Fourier)
+        # Use 5 harmonics (10 features) to capture sharper seasonal patterns
+        # like Black Week spikes that 3 harmonics (smooth curves) would miss
         week_of_year = df["week_start"].dt.isocalendar().week.values.astype(float)
-        n_harmonics = 3
+        n_harmonics = 5
         season_features = []
         for k in range(1, n_harmonics + 1):
             season_features.append(np.sin(2 * np.pi * k * week_of_year / 52))
@@ -290,6 +309,11 @@ class LightweightMMM:
             return col.replace("_spend", "")
 
         channel_priors = [get_channel_prior(col_to_prior_name(c)) for c in spend_cols]
+
+        # Channel params per channel:
+        #   [decay, alpha, lam, beta_base, beta_event]  = 5 params if interactions
+        #   [decay, alpha, lam, beta_base]               = 4 params if no interactions
+        params_per_channel = 5 if has_event_interactions else 4
 
         def model_predict_norm(params):
             """Predict revenue in normalized (z-score) space."""
@@ -306,17 +330,25 @@ class LightweightMMM:
                 pred += params[idx] * season_matrix[:, j]
                 idx += 1
 
-            # Channel effects (beta in z-score units)
+            # Channel effects with event interactions
+            # contribution_i = (beta_base + beta_event * heavy_discount) * saturated
             for i in range(n_channels):
                 decay = _safe_sigmoid(params[idx])
                 alpha = _safe_exp(params[idx + 1])
                 lam = _safe_exp(params[idx + 2])
-                beta = _safe_exp(params[idx + 3])
-                idx += 4
+                beta_base = _safe_exp(params[idx + 3])
+
+                if has_event_interactions:
+                    beta_event = _safe_exp(params[idx + 4])
+                    effective_beta = beta_base + beta_event * heavy_discount
+                else:
+                    effective_beta = beta_base
+
+                idx += params_per_channel
 
                 adstocked = geometric_adstock(spend_matrix[:, i], decay, channel_priors[i].adstock_max_lag)
                 saturated = hill_saturation(adstocked, alpha, lam)
-                pred += beta * saturated
+                pred += effective_beta * saturated
 
             # Control effects (in z-score units)
             for j in range(control_matrix.shape[1]):
@@ -350,10 +382,16 @@ class LightweightMMM:
                 lam = _safe_exp(params[idx + 2])
                 reg += 0.5 * ((lam - prior.saturation_lam_mean) / prior.saturation_lam_sd) ** 2
 
-                beta = _safe_exp(params[idx + 3])
-                reg += 0.5 * ((beta - prior.beta_mean) / prior.beta_sd) ** 2
+                beta_base = _safe_exp(params[idx + 3])
+                reg += 0.5 * ((beta_base - prior.beta_mean) / prior.beta_sd) ** 2
 
-                idx += 4
+                if has_event_interactions:
+                    # Light regularization: beta_event prior centered at beta_mean
+                    # (expect similar magnitude boost during events)
+                    beta_event = _safe_exp(params[idx + 4])
+                    reg += 0.5 * ((beta_event - prior.beta_mean) / (prior.beta_sd * 2)) ** 2
+
+                idx += params_per_channel
 
             # Return inf for NaN to guide optimizer away
             total = mse + 0.005 * reg
@@ -362,18 +400,18 @@ class LightweightMMM:
         # Initialize parameters (all in z-score space)
         n_season = season_matrix.shape[1]
         n_controls = control_matrix.shape[1]
-        n_params = 1 + 1 + n_season + n_channels * 4 + n_controls  # +1 for trend
+        n_params = 1 + 1 + n_season + n_channels * params_per_channel + n_controls
 
         x0 = np.zeros(n_params)
-        # x0[0] = 0  # intercept (mean already captured by normalization)
-        # x0[1] = 0  # trend coefficient
         idx = 1 + 1 + n_season  # skip intercept + trend + season
         for i, prior in enumerate(channel_priors):
             x0[idx] = np.log(prior.adstock_decay_mean / (1 - prior.adstock_decay_mean + 1e-8))
             x0[idx + 1] = np.log(prior.saturation_alpha_mean)
             x0[idx + 2] = np.log(prior.saturation_lam_mean)
             x0[idx + 3] = np.log(prior.beta_mean)
-            idx += 4
+            if has_event_interactions:
+                x0[idx + 4] = np.log(prior.beta_mean)  # init event boost = base beta
+            idx += params_per_channel
 
         # Multi-start optimization for robustness
         logger.info(f"Fitting MMM with {n_channels} channels, {T} weeks...")
@@ -415,9 +453,11 @@ class LightweightMMM:
             control_boot = control_matrix[idx_boot]
             season_boot = season_matrix[idx_boot]
             time_boot = time_index[idx_boot]
+            heavy_boot = heavy_discount[idx_boot]
 
             def loss_boot(params, _y_norm=y_boot_norm, _spend=spend_boot,
-                         _control=control_boot, _season=season_boot, _time=time_boot):
+                         _control=control_boot, _season=season_boot, _time=time_boot,
+                         _heavy=heavy_boot):
                 idx = 0
                 pred = np.full(T, params[idx])
                 idx += 1
@@ -430,11 +470,16 @@ class LightweightMMM:
                     decay = _safe_sigmoid(params[idx])
                     alpha = _safe_exp(params[idx + 1])
                     lam = _safe_exp(params[idx + 2])
-                    beta = _safe_exp(params[idx + 3])
-                    idx += 4
+                    beta_base = _safe_exp(params[idx + 3])
+                    if has_event_interactions:
+                        beta_event = _safe_exp(params[idx + 4])
+                        effective_beta = beta_base + beta_event * _heavy
+                    else:
+                        effective_beta = beta_base
+                    idx += params_per_channel
                     adstocked = geometric_adstock(_spend[:, i], decay, channel_priors[i].adstock_max_lag)
                     saturated = hill_saturation(adstocked, alpha, lam)
-                    pred += beta * saturated
+                    pred += effective_beta * saturated
                 for j in range(_control.shape[1]):
                     pred += params[idx] * _control[:, j]
                     idx += 1
@@ -477,23 +522,33 @@ class LightweightMMM:
             decay = _safe_sigmoid(best_params[idx])
             alpha = _safe_exp(best_params[idx + 1])
             lam = _safe_exp(best_params[idx + 2])
-            beta = _safe_exp(best_params[idx + 3])
+            beta_base = _safe_exp(best_params[idx + 3])
+
+            if has_event_interactions:
+                beta_event = _safe_exp(best_params[idx + 4])
+                effective_beta = beta_base + beta_event * heavy_discount
+            else:
+                beta_event = 0.0
+                effective_beta = beta_base
 
             adstocked = geometric_adstock(spend_matrix[:, i], decay, channel_priors[i].adstock_max_lag)
             saturated = hill_saturation(adstocked, alpha, lam)
-            # Contribution in raw scale = beta_norm * saturation * y_std
-            contribution_raw = beta * saturated * y_std
+            # Contribution in raw scale — effective_beta is (T,) during events
+            contribution_raw = effective_beta * saturated * y_std
 
             contributions[channel_name] = contribution_raw
             channel_params_dict[channel_name] = {
                 "adstock_decay": float(decay),
                 "saturation_alpha": float(alpha),
                 "saturation_lam": float(lam),
-                "beta": float(beta),
-                "beta_raw": float(beta * y_std),  # in revenue units
-                "adstock_training_mean": float(adstocked.mean()),  # for correct out-of-sample prediction
+                "beta": float(beta_base),
+                "beta_raw": float(beta_base * y_std),  # base revenue per unit saturation
+                "beta_event": float(beta_event),
+                "beta_event_raw": float(beta_event * y_std),  # additional revenue during events
+                "event_multiplier": float(1 + beta_event / (beta_base + 1e-8)),  # how much more effective during events
+                "adstock_training_mean": float(adstocked.mean()),
             }
-            idx += 4
+            idx += params_per_channel
 
         # Control contributions (raw scale)
         control_contribs = {}
@@ -511,14 +566,19 @@ class LightweightMMM:
 
             boot_roas = []
             for b_params in bootstrap_params:
-                b_idx = 1 + 1 + n_season + i * 4
+                b_idx = 1 + 1 + n_season + i * params_per_channel
                 b_decay = _safe_sigmoid(b_params[b_idx])
                 b_alpha = _safe_exp(b_params[b_idx + 1])
                 b_lam = _safe_exp(b_params[b_idx + 2])
-                b_beta = _safe_exp(b_params[b_idx + 3])
+                b_beta_base = _safe_exp(b_params[b_idx + 3])
+                if has_event_interactions:
+                    b_beta_event = _safe_exp(b_params[b_idx + 4])
+                    b_effective_beta = b_beta_base + b_beta_event * heavy_discount
+                else:
+                    b_effective_beta = b_beta_base
                 b_adstocked = geometric_adstock(spend_matrix[:, i], b_decay, channel_priors[i].adstock_max_lag)
                 b_saturated = hill_saturation(b_adstocked, b_alpha, b_lam)
-                b_contribution = (b_beta * b_saturated).sum() * y_std
+                b_contribution = (b_effective_beta * b_saturated).sum() * y_std
                 boot_roas.append(b_contribution / (total_spend + 1e-8))
 
             roas_data.append({
