@@ -273,8 +273,6 @@ class LightweightMMM:
 
         # Prepare spend matrices
         spend_matrix = np.column_stack([df[col].values.astype(float) for col in spend_cols])
-        control_matrix = np.column_stack([df[col].values.astype(float) for col in control_cols]) \
-            if control_cols else np.zeros((T, 0))
 
         # Heavy discount indicator for channel × event interactions
         # During heavy discount weeks (Black Week etc), conversion rates surge —
@@ -285,6 +283,19 @@ class LightweightMMM:
             heavy_discount = (df["discount_campaign"].values >= 2).astype(float)
         n_heavy_weeks = int(heavy_discount.sum())
         has_event_interactions = n_heavy_weeks >= 2  # need at least 2 weeks to fit
+
+        # When event interactions are active, REMOVE discount_campaign from the
+        # additive controls — the interaction terms model the discount effect
+        # multiplicatively (per-channel), which is more accurate. Keeping both
+        # confuses the optimizer: the additive control steals variance from the
+        # interaction terms, weakening the event boost.
+        if has_event_interactions and "discount_campaign" in control_cols:
+            control_cols = [c for c in control_cols if c != "discount_campaign"]
+            logger.info("Removed discount_campaign from controls (handled by channel × event interactions)")
+
+        control_matrix = np.column_stack([df[col].values.astype(float) for col in control_cols]) \
+            if control_cols else np.zeros((T, 0))
+
         logger.info(f"Heavy discount weeks: {n_heavy_weeks} — "
                     f"event interactions {'enabled' if has_event_interactions else 'disabled (too few weeks)'}")
 
@@ -386,10 +397,11 @@ class LightweightMMM:
                 reg += 0.5 * ((beta_base - prior.beta_mean) / prior.beta_sd) ** 2
 
                 if has_event_interactions:
-                    # Light regularization: beta_event prior centered at beta_mean
-                    # (expect similar magnitude boost during events)
+                    # Very light regularization on event boost — we expect it to
+                    # potentially be much larger than base beta (3-5x during
+                    # Black Week). Use 5x prior SD to let the data speak.
                     beta_event = _safe_exp(params[idx + 4])
-                    reg += 0.5 * ((beta_event - prior.beta_mean) / (prior.beta_sd * 2)) ** 2
+                    reg += 0.5 * ((beta_event - prior.beta_mean) / (prior.beta_sd * 5)) ** 2
 
                 idx += params_per_channel
 
