@@ -41,6 +41,7 @@ from optimize.spend_amer import (
     compute_historical_backcheck,
     compute_calibration_factor,
     compute_same_month_benchmark,
+    compute_observed_yoy_trend,
     optimize_channel_allocation,
 )
 
@@ -236,20 +237,62 @@ with col2:
     )
 
 with col3:
+    # Compute observed YoY trend from data
+    yoy_trend = compute_observed_yoy_trend(model_df)
+    observed_growth_label = ""
+    if yoy_trend is not None:
+        obs = yoy_trend["observed_capacity_growth_pct"]
+        observed_growth_label = f" (observed: {obs:+.0f}%)"
+
     yoy_growth = st.number_input(
         "YoY spend capacity growth %",
-        min_value=0.0,
+        min_value=-50.0,
         max_value=100.0,
-        value=20.0,
+        value=0.0,
         step=5.0,
         help="How much more you expect to be able to spend at the same aMER vs last year. "
-             "E.g., 20% means if you spent 500K last May, you can do ~600K this May at the same efficiency.",
+             "0% = assume same spend capacity as last year. "
+             "Set based on brand growth trajectory.",
     )
 
 cltv_mult = 1 + cltv_expansion / 100
 gm2_frac = gm2_pct / 100
 breakeven_amer_fo = 1 / gm2_frac
 breakeven_amer_365d = 1 / (cltv_mult * gm2_frac)
+
+# Show observed YoY trend from data
+if yoy_trend is not None:
+    obs_spend = yoy_trend["median_spend_change_pct"]
+    obs_amer = yoy_trend["median_amer_change_pct"]
+    obs_cap = yoy_trend["observed_capacity_growth_pct"]
+    n_months = yoy_trend["n_overlapping_months"]
+
+    trend_col1, trend_col2, trend_col3 = st.columns(3)
+    with trend_col1:
+        st.metric(
+            "Observed YoY spend change",
+            f"{obs_spend:+.0f}%",
+            help=f"Median spend change across {n_months} overlapping months.",
+        )
+    with trend_col2:
+        st.metric(
+            "Observed YoY aMER change",
+            f"{obs_amer:+.0f}%",
+            help=f"Median aMER change across {n_months} overlapping months. "
+                 "Positive = more efficient. Negative = less efficient.",
+        )
+    with trend_col3:
+        st.metric(
+            "Observed capacity growth",
+            f"{obs_cap:+.0f}%",
+            help="Spend growth in months where aMER didn't drop >10%. "
+                 "This is what the brand can spend more at similar efficiency.",
+        )
+    if obs_cap > 5 and yoy_growth == 0:
+        st.caption(
+            f"Data shows {obs_cap:+.0f}% capacity growth — consider setting "
+            f"YoY growth to reflect this if you expect the trend to continue."
+        )
 
 col1, col2 = st.columns(2)
 with col1:

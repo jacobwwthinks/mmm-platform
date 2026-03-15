@@ -611,11 +611,123 @@ def compute_historical_backcheck(
         return None
 
 
+def compute_observed_yoy_trend(
+    model_df: Optional[pd.DataFrame],
+) -> Optional[dict]:
+    """
+    Compute the observed year-over-year trend in spend and efficiency
+    from months where we have data for both this year and last year.
+
+    For each overlapping calendar month, compares:
+    - Spend change: did we spend more or less YoY?
+    - Efficiency change: did aMER improve, decline, or stay flat?
+    - Spend capacity: if aMER stayed ~flat, the spend change IS the
+      growth in spend capacity.
+
+    Returns dict with median YoY spend change, efficiency change,
+    and per-month detail.
+    """
+    if model_df is None:
+        return None
+
+    try:
+        mdf = model_df.copy()
+        mdf["week_start"] = pd.to_datetime(mdf["week_start"])
+        mdf["month"] = mdf["week_start"].dt.month
+        mdf["year"] = mdf["week_start"].dt.year
+
+        spend_cols = [c for c in mdf.columns if c.endswith("_spend")]
+        mdf["total_spend"] = mdf[spend_cols].sum(axis=1)
+        rev_col = "new_revenue" if "new_revenue" in mdf.columns else "revenue"
+
+        # Aggregate to monthly
+        monthly = mdf.groupby(["year", "month"]).agg(
+            total_spend=("total_spend", "sum"),
+            total_revenue=(rev_col, "sum"),
+            n_weeks=("total_spend", "count"),
+        ).reset_index()
+        monthly["amer"] = monthly["total_revenue"] / (monthly["total_spend"] + 1e-8)
+
+        years = sorted(monthly["year"].unique())
+        if len(years) < 2:
+            return None
+
+        # Compare consecutive years for overlapping months
+        comparisons = []
+        for i in range(len(years) - 1):
+            y1, y2 = years[i], years[i + 1]
+            m1 = monthly[monthly["year"] == y1]
+            m2 = monthly[monthly["year"] == y2]
+
+            for _, row2 in m2.iterrows():
+                m_num = row2["month"]
+                row1 = m1[m1["month"] == m_num]
+                if row1.empty:
+                    continue
+                row1 = row1.iloc[0]
+
+                # Skip months with very low spend (noise)
+                if row1["total_spend"] < 10000 or row2["total_spend"] < 10000:
+                    continue
+                # Skip partial months
+                if row1["n_weeks"] < 3 or row2["n_weeks"] < 3:
+                    continue
+
+                spend_change_pct = (row2["total_spend"] - row1["total_spend"]) / (row1["total_spend"] + 1e-8) * 100
+                amer_change_pct = (row2["amer"] - row1["amer"]) / (row1["amer"] + 1e-8) * 100
+
+                comparisons.append({
+                    "month": m_num,
+                    "month_name": datetime.date(y2, m_num, 1).strftime("%b"),
+                    "year_from": y1,
+                    "year_to": y2,
+                    "spend_y1": row1["total_spend"],
+                    "spend_y2": row2["total_spend"],
+                    "amer_y1": row1["amer"],
+                    "amer_y2": row2["amer"],
+                    "spend_change_pct": spend_change_pct,
+                    "amer_change_pct": amer_change_pct,
+                })
+
+        if not comparisons:
+            return None
+
+        spend_changes = [c["spend_change_pct"] for c in comparisons]
+        amer_changes = [c["amer_change_pct"] for c in comparisons]
+
+        median_spend_change = float(np.median(spend_changes))
+        median_amer_change = float(np.median(amer_changes))
+
+        # "Spend capacity growth" = spend grew while aMER didn't collapse
+        # If aMER dropped less than 10%, the spend growth is genuine capacity growth
+        capacity_growth_months = [
+            c for c in comparisons if c["amer_change_pct"] > -10
+        ]
+        if capacity_growth_months:
+            observed_capacity_growth = float(np.median(
+                [c["spend_change_pct"] for c in capacity_growth_months]
+            ))
+        else:
+            observed_capacity_growth = 0.0
+
+        return {
+            "comparisons": comparisons,
+            "n_overlapping_months": len(comparisons),
+            "median_spend_change_pct": median_spend_change,
+            "median_amer_change_pct": median_amer_change,
+            "observed_capacity_growth_pct": observed_capacity_growth,
+        }
+
+    except Exception as e:
+        logger.warning(f"Could not compute YoY trend: {e}")
+        return None
+
+
 def compute_same_month_benchmark(
     model_df: Optional[pd.DataFrame],
     target_month: int,
     target_year: int,
-    yoy_growth_pct: float = 20.0,
+    yoy_growth_pct: float = 0.0,
 ) -> Optional[dict]:
     """
     Pull historical spend and aMER for the same calendar month from prior years.
