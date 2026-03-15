@@ -145,6 +145,37 @@ historical_max_monthly_spend = 0
 if historical is not None and len(historical) > 0:
     historical_max_monthly_spend = historical["total_spend"].max()
 
+# ── Check for missing forward-looking events ──────────────
+# Months without any event data will silently use event_boost=1.0,
+# which massively underestimates spend capacity during campaign months.
+today = datetime.date.today()
+_months_missing_events = []
+for m in range(12):
+    _month_num = (today.month - 1 + m) % 12 + 1
+    _year = today.year + (today.month - 1 + m) // 12
+    has_events = False
+    if events_df is not None and not events_df.empty:
+        _edf = events_df.copy()
+        _edf["week_start"] = pd.to_datetime(_edf["week_start"])
+        _me = _edf[
+            (_edf["week_start"].dt.month == _month_num) &
+            (_edf["week_start"].dt.year == _year)
+        ]
+        has_events = len(_me) > 0
+    if not has_events:
+        _months_missing_events.append(datetime.date(_year, _month_num, 1).strftime("%b %Y"))
+
+if _months_missing_events:
+    st.error(
+        "**Event calendar missing for planned months**\n\n"
+        "The following months have **no events** in the calendar: "
+        f"**{', '.join(_months_missing_events)}**.\n\n"
+        "Without a forward-looking event plan, the model assumes no campaigns — "
+        "which significantly underestimates spend capacity during discount months "
+        "(e.g. Black Week, Birthday Week). "
+        "Go to **Event Calendar** to add planned events before locking in these months."
+    )
+
 
 # ═══════════════════════════════════════════════════════════════
 # UNIT ECONOMICS INPUTS
@@ -299,6 +330,12 @@ with col3:
 
 if month_events_list:
     st.caption(f"Events: {' · '.join(month_events_list)}")
+elif sel_label in _months_missing_events:
+    st.warning(
+        f"**No events planned for {sel_label}.** "
+        "If you're running campaigns this month, add them in the "
+        "**Event Calendar** — otherwise the model assumes no campaign boost."
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
