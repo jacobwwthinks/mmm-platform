@@ -210,31 +210,23 @@ def _extrapolation_confidence(
     historical_avg_spend: float,
 ) -> float:
     """
-    Discount factor for model predictions at spend levels beyond observed data.
+    Discount factor for *incremental* revenue at spend levels beyond observed data.
 
     The MMM saturation curves are fitted on historical spend ranges. As spend
     moves far beyond that range, the model is extrapolating — and predictions
-    become increasingly unreliable. This function applies a confidence discount
-    so the optimizer doesn't treat extrapolated predictions as trustworthy.
+    become increasingly unreliable.
 
-    The discount is deliberately aggressive because:
-    - CLTV expansion (e.g. 125%) shifts the GP3 breakeven to very low aMER,
-      meaning the optimizer will chase high spend unless extrapolation is
-      strongly penalised.
-    - In practice, brands can rarely scale spend more than 30-50% beyond
-      prior peaks without hitting creative fatigue, audience saturation, or
-      operational constraints the model can't see.
+    IMPORTANT: This factor is applied only to the *increment* above the
+    historical-spend baseline (via _apply_extrapolation_discount), NOT to
+    the total revenue. This ensures NC net sales never decreases with more
+    spend — at worst it flattens out.
 
     Calibrated so that:
       - At historical spend: full confidence (1.0)
-      - At 1.3x: ~75% confidence
-      - At 1.5x: ~55% confidence
-      - At 2.0x: ~25% confidence
+      - At 1.3x: ~75% confidence on the increment
+      - At 1.5x: ~55% confidence on the increment
+      - At 2.0x: ~25% confidence on the increment
       - At 2.5x+: ~10% (floor)
-
-    This keeps recommendations grounded: a typical month should land within
-    +/- 30% of historical spend, and even a strong seasonal month (with 1.5x
-    multiplier) rarely exceeds +50%.
     """
     if historical_avg_spend <= 0:
         return 1.0
@@ -249,6 +241,32 @@ def _extrapolation_confidence(
     # Steep power-curve discount over the range 1.0x → 2.5x
     t = (ratio - 1.0) / 1.5  # 0 at 1x, 1.0 at 2.5x
     return max(0.10, 1.0 - 0.90 * (t ** 0.8))
+
+
+def _apply_extrapolation_discount(
+    channel_rev: float,
+    baseline_channel_rev: float,
+    extrap_conf: float,
+) -> float:
+    """
+    Apply extrapolation discount only to incremental revenue above baseline.
+
+    This ensures revenue is monotonically non-decreasing with spend:
+    - At or below historical spend: full revenue (no discount)
+    - Above historical: increment is discounted, but total never drops
+
+    Args:
+        channel_rev: Raw channel revenue at the target spend level
+        baseline_channel_rev: Channel revenue at historical average spend
+        extrap_conf: Extrapolation confidence (0-1) from _extrapolation_confidence()
+
+    Returns:
+        Discounted channel revenue, guaranteed >= baseline_channel_rev
+    """
+    if extrap_conf >= 1.0 or channel_rev <= baseline_channel_rev:
+        return channel_rev
+    increment = channel_rev - baseline_channel_rev
+    return baseline_channel_rev + increment * extrap_conf
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -291,6 +309,14 @@ def compute_gp3_curve(
     cltv_mult = 1 + cltv_expansion_pct / 100
     gm2_frac = gm2_pct / 100
 
+    # Precompute baseline channel revenue at historical spend (full calibration, no extrap discount)
+    baseline_channel_rev = 0
+    for ch in channels:
+        ch_spend = current_total * alloc_ratios.get(ch, 1 / len(channels))
+        ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
+        baseline_channel_rev += ch_rev
+    baseline_channel_rev *= calibration_factor * seasonal_multiplier
+
     spend_levels = np.linspace(0, current_total * max_spend_mult, n_points)
 
     rows = []
@@ -303,9 +329,12 @@ def compute_gp3_curve(
 
         # Apply calibration with diminishing weight beyond historical spend
         eff_cal = _effective_calibration(calibration_factor, total_spend, current_total)
-        # Apply extrapolation confidence discount beyond observed data range
+        channel_rev *= eff_cal * seasonal_multiplier
+
+        # Apply extrapolation discount only to the increment above baseline
+        # This ensures NC net sales never decreases with more spend
         extrap_conf = _extrapolation_confidence(total_spend, current_total)
-        channel_rev *= eff_cal * extrap_conf * seasonal_multiplier
+        channel_rev = _apply_extrapolation_discount(channel_rev, baseline_channel_rev, extrap_conf)
 
         total_new_rev = organic_weekly_revenue + channel_rev
         rev_365d = total_new_rev * cltv_mult
@@ -394,6 +423,14 @@ def find_optimal_spend(
     breakeven_amer_first_order = 1 / gm2_frac
     breakeven_amer_365d = 1 / (cltv_mult * gm2_frac)
 
+    # Precompute baseline channel revenue at historical spend
+    baseline_channel_rev = 0
+    for ch in channels:
+        ch_spend = current_total * alloc_ratios.get(ch, 1 / len(channels))
+        ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
+        baseline_channel_rev += ch_rev
+    baseline_channel_rev *= calibration_factor * seasonal_multiplier
+
     def _compute_at_spend(total_spend):
         """Compute revenue and GP3 at a given spend level."""
         channel_rev = 0
@@ -403,9 +440,10 @@ def find_optimal_spend(
             channel_rev += ch_rev
         # Diminishing calibration: full at historical spend, fading beyond
         eff_cal = _effective_calibration(calibration_factor, total_spend, current_total)
-        # Extrapolation confidence discount
+        channel_rev *= eff_cal * seasonal_multiplier
+        # Extrapolation discount on increment only (ensures monotonicity)
         extrap_conf = _extrapolation_confidence(total_spend, current_total)
-        channel_rev *= eff_cal * extrap_conf * seasonal_multiplier
+        channel_rev = _apply_extrapolation_discount(channel_rev, baseline_channel_rev, extrap_conf)
         total_new_rev = organic_weekly_revenue + channel_rev
         gp3_first_order = total_new_rev * gm2_frac - total_spend
         gp3_365d = total_new_rev * cltv_mult * gm2_frac - total_spend
@@ -450,11 +488,20 @@ def find_optimal_spend(
     # Channel breakdown at recommended spend
     eff_cal_opt = _effective_calibration(calibration_factor, optimal_spend, current_total)
     extrap_conf_opt = _extrapolation_confidence(optimal_spend, current_total)
+    # Compute total raw revenue at optimal spend for proportional discount
+    total_raw_opt = 0
+    for ch in channels:
+        ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
+        total_raw_opt += predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
+    total_raw_opt *= eff_cal_opt * seasonal_multiplier
+    total_disc_opt = _apply_extrapolation_discount(total_raw_opt, baseline_channel_rev, extrap_conf_opt)
+    disc_ratio = total_disc_opt / (total_raw_opt + 1e-8)
+
     channel_allocation = {}
     for ch in channels:
         ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev *= eff_cal_opt * extrap_conf_opt * seasonal_multiplier
+        ch_rev *= eff_cal_opt * seasonal_multiplier * disc_ratio
         channel_allocation[ch] = {
             "weekly_spend": ch_spend,
             "monthly_spend": ch_spend * 4.33,
@@ -1055,11 +1102,20 @@ def optimize_channel_allocation(
     eff_cal = _effective_calibration(calibration_factor, total_weekly_spend, current_total)
     extrap_conf = _extrapolation_confidence(total_weekly_spend, current_total)
 
+    # Baseline channel revenue at historical spend for monotonic discount
+    baseline_rev = 0
+    for ch in channels:
+        ch_spend_hist = current_spend[ch]
+        baseline_rev += predict_channel_revenue(ch_spend_hist, params[ch], adstock_means[ch])
+    baseline_rev *= calibration_factor * seasonal_multiplier
+
     def neg_revenue(allocation):
         total_rev = 0
         for i, ch in enumerate(channels):
             rev = predict_channel_revenue(allocation[i], params[ch], adstock_means[ch])
-            total_rev += rev * eff_cal * extrap_conf * seasonal_multiplier
+            total_rev += rev
+        total_rev *= eff_cal * seasonal_multiplier
+        total_rev = _apply_extrapolation_discount(total_rev, baseline_rev, extrap_conf)
         return -total_rev
 
     x0 = np.array([
@@ -1076,10 +1132,19 @@ def optimize_channel_allocation(
     )
 
     rows = []
+    total_raw_rev = 0
     for i, ch in enumerate(channels):
         ch_spend = result.x[i]
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev *= eff_cal * extrap_conf * seasonal_multiplier
+        total_raw_rev += ch_rev
+    total_raw_rev *= eff_cal * seasonal_multiplier
+    total_discounted_rev = _apply_extrapolation_discount(total_raw_rev, baseline_rev, extrap_conf)
+    discount_ratio = total_discounted_rev / (total_raw_rev + 1e-8)
+
+    for i, ch in enumerate(channels):
+        ch_spend = result.x[i]
+        ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
+        ch_rev *= eff_cal * seasonal_multiplier * discount_ratio
         rows.append({
             "channel": ch,
             "weekly_spend": round(ch_spend, 0),

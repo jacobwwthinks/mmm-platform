@@ -578,6 +578,7 @@ with _m3:
     )
 
     fig.update_layout(
+        title="",
         height=450,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(t=60),
@@ -738,6 +739,7 @@ with _m5:
             textposition="outside",
         ))
         fig_pie.update_layout(
+            title="",
             height=320,
             margin=dict(t=20, b=20),
             showlegend=False,
@@ -930,6 +932,7 @@ with _m6:
     )
 
     fig_overview.update_layout(
+        title="",
         height=400,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         **PLOTLY_LAYOUT,
@@ -1039,6 +1042,7 @@ with _m7:
     ))
 
     fig_amer.update_layout(
+        title="",
         xaxis_title="Monthly marketing spend (SEK)",
         yaxis_title="aMER (revenue / spend)",
         height=350,
@@ -1106,6 +1110,7 @@ with _m8:
         )
 
         fig_hist.update_layout(
+            title="",
             height=380,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             **PLOTLY_LAYOUT,
