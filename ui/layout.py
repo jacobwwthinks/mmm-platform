@@ -28,6 +28,129 @@ Usage in a page:
 import streamlit as st
 
 
+def inject_global_css():
+    """Inject all global CSS — fonts, sidebar, headings, metrics, layout.
+
+    Must be called on every page (including app.py) to ensure consistent styling.
+    Called automatically by render_sidebar().
+    """
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    html, body, [class*="css"], .stMarkdown, .stText, .stDataFrame,
+    h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+    }
+
+    /* Plotly charts: transparent background */
+    .js-plotly-plot .plotly .main-svg {
+        background: transparent !important;
+    }
+
+    /* ── Hide default Streamlit auto-generated sidebar nav ── */
+    [data-testid="stSidebarNav"],
+    [data-testid="stSidebarNavItems"],
+    nav[data-testid="stSidebarNavItems"],
+    [data-testid="stSidebarNavSeparator"],
+    [data-testid="stSidebarNavLink"],
+    ul[data-testid="stSidebarNavItems"] {
+        display: none !important;
+        height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    /* Narrower left sidebar */
+    [data-testid="stSidebar"] {
+        min-width: 180px !important;
+        max-width: 180px !important;
+        width: 180px !important;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        width: 180px !important;
+    }
+
+    /* ── Collapse button: hide icon-name text leak ── */
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"],
+    button[kind="headerNoPadding"] {
+        overflow: hidden !important;
+    }
+    [data-testid="collapsedControl"] span,
+    [data-testid="stSidebarCollapsedControl"] span,
+    button[kind="headerNoPadding"] span,
+    [data-testid="stSidebar"] button[kind="header"] span,
+    [data-testid="stSidebar"] [data-testid="stBaseButton-header"] span {
+        font-size: 0 !important;
+        line-height: 0 !important;
+        overflow: hidden !important;
+        display: inline-block !important;
+        width: 1.2em !important;
+        height: 1.2em !important;
+    }
+
+    /* ── All headings: smaller, lighter ── */
+    h1, h1 span { font-size: 1.1rem !important; font-weight: 300 !important; text-transform: uppercase !important; letter-spacing: 0.05em !important; }
+    h2, h2 span { font-size: 0.92rem !important; font-weight: 500 !important; }
+    h3, h3 span { font-size: 0.85rem !important; font-weight: 500 !important; }
+    h4, h4 span, h5, h5 span, h6, h6 span { font-size: 0.8rem !important; font-weight: 500 !important; }
+
+    /* ── Body text ── */
+    p, li, span, label, div {
+        font-size: 0.82rem !important;
+    }
+
+    /* ── Sidebar overrides: even smaller, no uppercase ── */
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h1 span,
+    [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h2 span,
+    [data-testid="stSidebar"] h3, [data-testid="stSidebar"] h3 span,
+    [data-testid="stSidebar"] h4, [data-testid="stSidebar"] h4 span {
+        font-size: 0.78rem !important;
+        font-weight: 500 !important;
+        text-transform: none !important;
+        letter-spacing: normal !important;
+    }
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div {
+        font-size: 0.76rem !important;
+    }
+    [data-testid="stSidebar"] a[data-testid="stSidebarNavLink"],
+    [data-testid="stSidebar"] .stPageLink a,
+    [data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {
+        font-size: 0.78rem !important;
+    }
+
+    /* ── Metric cards: compact ── */
+    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {
+        font-size: 1.0rem !important;
+    }
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {
+        font-size: 0.7rem !important;
+    }
+    [data-testid="stMetricDelta"], [data-testid="stMetricDelta"] div {
+        font-size: 0.68rem !important;
+    }
+
+    /* ── Tables/dataframes ── */
+    [data-testid="stDataFrame"] {
+        font-size: 0.78rem !important;
+    }
+
+    /* Full-width layout — reduce default padding */
+    .stMainBlockContainer, .block-container {
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
+        max-width: 100% !important;
+    }
+    .block-container {
+        padding-top: 1.5rem !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
 def render_sidebar():
     """Render the shared sidebar navigation on every page.
 
@@ -35,7 +158,7 @@ def render_sidebar():
     home page or any sub-page.  Must be called after session state
     has been initialised (selected_client, client_config, config).
     """
-    from pathlib import Path
+    inject_global_css()
 
     st.sidebar.page_link("app.py", label="Home")
     st.sidebar.page_link("pages/1_Client_Overview.py", label="Client Overview")
@@ -86,6 +209,13 @@ def render_sidebar():
             st.sidebar.markdown("  + Shopify (Revenue)")
         else:
             st.sidebar.markdown("  - Shopify (Revenue)")
+
+    # Log out + footer — consistent on every page
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Log out", key="sidebar_logout"):
+        st.session_state["authenticated"] = False
+        st.rerun()
+    st.sidebar.caption("Built for DTC e-commerce brands")
 
 
 def inject_context_css():
