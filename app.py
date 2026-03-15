@@ -46,22 +46,41 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
     width: 180px !important;
 }
 
-/* Lighter heading weight + smaller sizes */
-h1, [data-testid="stTitle"], [data-testid="stTitle"] span,
-[data-testid="stHeading"] h1, [data-testid="stHeading"] h1 span {
+/* Main content headings — lighter weight + smaller sizes + uppercase */
+.stMainBlockContainer h1,
+.stMainBlockContainer [data-testid="stHeading"] h1,
+.stMainBlockContainer [data-testid="stHeading"] h1 span {
     font-weight: 300 !important;
     font-size: 1.6rem !important;
     text-transform: uppercase !important;
     letter-spacing: 0.05em !important;
 }
-h2, h3, [data-testid="stHeading"] h2, [data-testid="stHeading"] h2 span,
-[data-testid="stHeading"] h3, [data-testid="stHeading"] h3 span {
+.stMainBlockContainer h2, .stMainBlockContainer h3,
+.stMainBlockContainer [data-testid="stHeading"] h2,
+.stMainBlockContainer [data-testid="stHeading"] h3 {
     font-weight: 400 !important;
     font-size: 1.25rem !important;
 }
-h4, h5, h6 {
+.stMainBlockContainer h4, .stMainBlockContainer h5, .stMainBlockContainer h6 {
     font-weight: 400 !important;
     font-size: 1.05rem !important;
+}
+
+/* Sidebar — compact font sizes, no uppercase */
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3, [data-testid="stSidebar"] h4,
+[data-testid="stSidebar"] h5, [data-testid="stSidebar"] h6,
+[data-testid="stSidebar"] [data-testid="stHeading"] span {
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+}
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stPageLink a {
+    font-size: 0.82rem !important;
 }
 
 /* Smaller metric values and labels */
