@@ -73,7 +73,10 @@ def predict_channel_revenue(
 
     # Hill saturation (manual — bypasses hill_saturation() which renormalizes)
     alpha = np.clip(params["saturation_alpha"], 0.01, 10.0)
-    lam = np.clip(params["saturation_lam"], 0.01, 10.0)
+    # Use end-of-training lam if available (accounts for saturation curve shift)
+    # saturation_lam_end captures the current state of the saturation curve,
+    # reflecting any expansion in channel capacity over time.
+    lam = np.clip(params.get("saturation_lam_end", params["saturation_lam"]), 0.01, 10.0)
     exponent = np.clip(lam * np.power(x_norm, alpha), 0, 30)
     saturated = 1 - np.exp(-exponent)
 
