@@ -305,7 +305,9 @@ if results is None:
 col1, col2, col3, col4 = st.columns(4)
 
 total_revenue = results.actual.sum()
-total_spend = results.channel_roas["total_spend"].sum()
+# Only sum actual paid ad spend (exclude email opens which aren't spend)
+paid_roas = results.channel_roas[results.channel_roas["channel"] != "email"]
+total_spend = paid_roas["total_spend"].sum()
 blended_roas = total_revenue / (total_spend + 1e-8)
 
 with col1:
