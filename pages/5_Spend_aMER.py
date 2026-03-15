@@ -442,6 +442,7 @@ with main:
         organic_weekly_revenue=organic_weekly,
         seasonal_multiplier=effective_mult,
         calibration_factor=cal_factor,
+        yoy_growth_pct=yoy_growth,
     )
 
     # Generate GP3 curve — start from 20% of current to avoid misleading S-curve region
@@ -796,6 +797,7 @@ with main:
                 organic_weekly_revenue=o_weekly,
                 seasonal_multiplier=eff,
                 calibration_factor=cal_factor,
+                yoy_growth_pct=yoy_growth,
             )
             overview_rows.append({
                 "month": mo["date"].strftime("%b %Y"),
