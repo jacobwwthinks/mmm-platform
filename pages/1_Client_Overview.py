@@ -386,9 +386,14 @@ for col in ctrl_df.columns:
 
 wf_df = pd.DataFrame(waterfall_data)
 
+# Add total bar at the end
+wf_df = pd.concat([wf_df, pd.DataFrame([{"component": "Total", "value": wf_df["value"].sum()}])], ignore_index=True)
+measures = ["relative"] * (len(wf_df) - 1) + ["total"]
+
 fig_waterfall = go.Figure(go.Waterfall(
     x=wf_df["component"],
     y=wf_df["value"],
+    measure=measures,
     textposition="outside",
     text=[f"{v:,.0f}" for v in wf_df["value"]],
     connector={"line": {"color": "rgb(63, 63, 63)"}},
