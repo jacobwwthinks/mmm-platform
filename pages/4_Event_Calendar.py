@@ -78,7 +78,7 @@ else:
 # MAIN LAYOUT: data | context
 # ═══════════════════════════════════════════════════════════════
 
-main, ctx = st.columns([3, 1])
+main, ctx = st.columns([4, 1])
 
 with main:
     # ── Download / Upload controls ────────────────────────────

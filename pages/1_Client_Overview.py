@@ -55,7 +55,7 @@ TEAL = "#76B7B2"
 # DATA CONTROLS + UPLOAD (above the main/context split)
 # ═══════════════════════════════════════════════════════════════
 
-main_top, ctx_top = st.columns([3, 1])
+main_top, ctx_top = st.columns([4, 1])
 
 with main_top:
     # ── Data Controls ────────────────────────────────────────────
@@ -324,7 +324,7 @@ if results is None:
 # RESULTS DASHBOARD (full MMM results available)
 # ═══════════════════════════════════════════════════════════════
 
-main, ctx = st.columns([3, 1])
+main, ctx = st.columns([4, 1])
 
 with main:
     # ── Summary Cards ────────────────────────────────────────────

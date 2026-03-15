@@ -107,7 +107,7 @@ event_boosts = compute_event_boosts(results, model_df, events_df)
 # MAIN LAYOUT: data | context
 # ═══════════════════════════════════════════════════════════════
 
-main, ctx = st.columns([3, 1])
+main, ctx = st.columns([4, 1])
 
 with main:
     # ── Month Selector ──────────────────────────────────────────
