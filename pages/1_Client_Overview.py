@@ -317,6 +317,49 @@ with col3:
 with col4:
     st.metric("Model Fit (R²)", f"{results.r_squared:.3f}")
 
+# ── Historical Spend Build-Up by Channel ─────────────────────
+
+st.subheader("Weekly Spend by Channel")
+
+# Load model_df from session or disk if needed
+if model_df is None:
+    for base in [Path("."), Path(__file__).parent.parent]:
+        mdf_path = base / "results" / selected_client / "model_df.pkl"
+        if mdf_path.exists():
+            with open(mdf_path, "rb") as _f:
+                model_df = pickle.load(_f)
+                st.session_state["model_df"] = model_df
+            break
+
+if model_df is not None:
+    spend_cols = [c for c in model_df.columns if c.endswith("_spend") and model_df[c].sum() > 0]
+    if spend_cols:
+        # Build stacked area chart
+        CHANNEL_COLORS = ["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"]
+        fig_spend = go.Figure()
+        for i, col in enumerate(spend_cols):
+            ch_name = col.replace("_spend", "").replace("_", " ").title()
+            fig_spend.add_trace(go.Scatter(
+                x=model_df["week_start"],
+                y=model_df[col],
+                name=ch_name,
+                stackgroup="spend",
+                line=dict(width=0.5, color=CHANNEL_COLORS[i % len(CHANNEL_COLORS)]),
+                fillcolor=CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
+            ))
+        fig_spend.update_layout(
+            yaxis_title="Spend (SEK)",
+            height=400,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            hovermode="x unified",
+            **PLOTLY_LAYOUT,
+        )
+        st.plotly_chart(fig_spend, use_container_width=True)
+    else:
+        st.caption("No spend data available for build-up chart.")
+else:
+    st.caption("Run the model to see spend build-up by channel.")
+
 # ── Revenue Decomposition Waterfall ──────────────────────────
 
 st.subheader("Revenue Decomposition")

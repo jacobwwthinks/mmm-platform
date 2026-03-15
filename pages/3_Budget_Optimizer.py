@@ -65,17 +65,24 @@ st.subheader("Budget Scenario")
 
 col1, col2 = st.columns(2)
 with col1:
-    budget_multiplier = st.slider(
-        "Budget adjustment",
-        min_value=0.5,
-        max_value=2.0,
-        value=1.0,
-        step=0.05,
-        format="%.0f%%",
-        help="1.0 = current budget. 1.2 = 20% increase.",
+    # Round current budget to nearest 1,000 for clean slider steps
+    budget_step = 5_000
+    budget_min = max(budget_step, int(round(current_total_weekly * 0.25 / budget_step)) * budget_step)
+    budget_max = int(round(current_total_weekly * 2.5 / budget_step)) * budget_step
+    budget_default = int(round(current_total_weekly / budget_step)) * budget_step
+
+    target_budget = st.slider(
+        "Weekly budget (SEK)",
+        min_value=budget_min,
+        max_value=budget_max,
+        value=budget_default,
+        step=budget_step,
+        format="%,.0f",
+        help=f"Current average weekly spend: {current_total_weekly:,.0f} SEK. "
+             f"Drag to explore different budget levels.",
     )
-    target_budget = current_total_weekly * budget_multiplier
-    st.metric("Weekly budget", f"{target_budget:,.0f}", f"{(budget_multiplier - 1) * 100:+.0f}%")
+    budget_change_pct = (target_budget - current_total_weekly) / current_total_weekly * 100
+    st.metric("Weekly budget", f"{target_budget:,.0f} SEK", f"{budget_change_pct:+.1f}% vs current")
 
 with col2:
     st.markdown("**Constraints:**")
