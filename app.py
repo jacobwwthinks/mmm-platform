@@ -36,6 +36,16 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
     display: none;
 }
 
+/* Narrower left sidebar */
+[data-testid="stSidebar"] {
+    min-width: 180px !important;
+    max-width: 180px !important;
+    width: 180px !important;
+}
+[data-testid="stSidebar"] > div:first-child {
+    width: 180px !important;
+}
+
 /* Lighter heading weight + smaller sizes */
 h1, [data-testid="stTitle"], [data-testid="stTitle"] span,
 [data-testid="stHeading"] h1, [data-testid="stHeading"] h1 span {
