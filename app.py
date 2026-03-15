@@ -37,12 +37,14 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
 }
 
 /* Lighter heading weight — less clunky bold */
-h1 {
+h1, [data-testid="stTitle"], [data-testid="stTitle"] span,
+[data-testid="stHeading"] h1, [data-testid="stHeading"] h1 span {
     font-weight: 300 !important;
     text-transform: uppercase !important;
     letter-spacing: 0.05em !important;
 }
-h2, h3 {
+h2, h3, [data-testid="stHeading"] h2, [data-testid="stHeading"] h2 span,
+[data-testid="stHeading"] h3, [data-testid="stHeading"] h3 span {
     font-weight: 400 !important;
 }
 h4, h5, h6 {
