@@ -253,7 +253,7 @@ def _apply_extrapolation_discount(
 
     This ensures revenue is monotonically non-decreasing with spend:
     - At or below historical spend: full revenue (no discount)
-    - Above historical: increment is discounted, but total never drops
+    - Above historical: increment is discounted, but total never drops below baseline
 
     Args:
         channel_rev: Raw channel revenue at the target spend level
@@ -261,11 +261,13 @@ def _apply_extrapolation_discount(
         extrap_conf: Extrapolation confidence (0-1) from _extrapolation_confidence()
 
     Returns:
-        Discounted channel revenue, guaranteed >= baseline_channel_rev
+        Discounted channel revenue, guaranteed >= baseline_channel_rev when extrapolating
     """
-    if extrap_conf >= 1.0 or channel_rev <= baseline_channel_rev:
+    if extrap_conf >= 1.0:
         return channel_rev
-    increment = channel_rev - baseline_channel_rev
+    # We're beyond historical spend — floor at baseline
+    effective_rev = max(channel_rev, baseline_channel_rev)
+    increment = effective_rev - baseline_channel_rev
     return baseline_channel_rev + increment * extrap_conf
 
 
@@ -354,6 +356,25 @@ def compute_gp3_curve(
             "gp3_365d_monthly": gp3_365d * 4.33,
             "amer": amer,
         })
+
+    # ── Enforce monotonicity on NC net sales ──
+    # The combination of calibration fade + extrapolation discount can make
+    # the discounted revenue non-monotone even though each mechanism is
+    # individually sound. NC net sales must never decrease with more spend.
+    for i in range(1, len(rows)):
+        if rows[i]["paid_new_customer_revenue"] < rows[i - 1]["paid_new_customer_revenue"]:
+            prev_ch_rev = rows[i - 1]["paid_new_customer_revenue"]
+            rows[i]["paid_new_customer_revenue"] = prev_ch_rev
+            total_new_rev = organic_weekly_revenue + prev_ch_rev
+            total_spend_i = rows[i]["weekly_spend"]
+            rev_365d = total_new_rev * cltv_mult
+            rows[i]["total_new_customer_revenue"] = total_new_rev
+            rows[i]["revenue_365d"] = rev_365d
+            rows[i]["gp3_first_order"] = total_new_rev * gm2_frac - total_spend_i
+            rows[i]["gp3_first_order_monthly"] = rows[i]["gp3_first_order"] * 4.33
+            rows[i]["gp3_365d"] = rev_365d * gm2_frac - total_spend_i
+            rows[i]["gp3_365d_monthly"] = rows[i]["gp3_365d"] * 4.33
+            rows[i]["amer"] = total_new_rev / (total_spend_i + 1e-8) if total_spend_i > 0 else 0
 
     df = pd.DataFrame(rows)
 
