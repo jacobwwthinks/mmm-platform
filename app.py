@@ -43,6 +43,18 @@ h1, h2, h3 {
 h4, h5, h6 {
     font-weight: 500 !important;
 }
+
+/* Full-width layout — reduce default padding */
+.stMainBlockContainer, .block-container {
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+    max-width: 100% !important;
+}
+
+/* Tighten top padding */
+.block-container {
+    padding-top: 2rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
