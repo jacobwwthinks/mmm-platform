@@ -37,11 +37,16 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
 }
 
 /* Lighter heading weight — less clunky bold */
-h1, h2, h3 {
-    font-weight: 500 !important;
+h1 {
+    font-weight: 300 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+}
+h2, h3 {
+    font-weight: 400 !important;
 }
 h4, h5, h6 {
-    font-weight: 500 !important;
+    font-weight: 400 !important;
 }
 
 /* Full-width layout — reduce default padding */
