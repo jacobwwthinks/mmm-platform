@@ -8,7 +8,7 @@ the model updates with actual data.
 Based on industry benchmarks and Meta/Google MMM research papers.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -44,9 +44,12 @@ class ChannelPrior:
 DTC_CHANNEL_PRIORS = {
 
     "meta": ChannelPrior(
-        # Meta (Facebook/Instagram): Broad reach, moderate carryover.
+        # Meta (Facebook/Instagram): Primary acquisition driver for DTC.
         # Brand awareness ads have longer decay; conversion ads shorter.
         # Beta is in z-score units (fraction of revenue std dev).
+        # Stronger prior than other channels — Meta is typically the largest
+        # driver of new customer acquisition, and standard MMMs under-attribute
+        # Meta due to halo effects (Meta → Google brand search).
         adstock_decay_mean=0.4,
         adstock_decay_sd=0.15,
         adstock_max_lag=4,
@@ -54,10 +57,11 @@ DTC_CHANNEL_PRIORS = {
         saturation_alpha_sd=1.0,
         saturation_lam_mean=0.5,
         saturation_lam_sd=0.3,
-        beta_mean=0.4,
+        beta_mean=0.55,
         beta_sd=0.3,
         notes="Primary acquisition channel for most DTC brands. "
-              "Mix of prospecting + retargeting. Moderate carryover."
+              "Mix of prospecting + retargeting. Moderate carryover. "
+              "Stronger prior reflects halo effect on brand search."
     ),
 
     "google_ads": ChannelPrior(
@@ -179,6 +183,35 @@ CONTROL_PRIORS = {
         "notes": "Shopping holidays (BF, Christmas) naturally lift revenue"
     },
 }
+
+# Cross-channel spillover priors.
+# Captures halo effects where one channel's spend drives conversions
+# attributed to another channel (e.g., Meta awareness → Google brand search).
+# The fraction (0-1) represents how much of the source channel's adstocked
+# signal "flows into" the target channel before saturation is applied.
+SPILLOVER_PRIORS = {
+    "meta->google_ads": {
+        "mean": 0.25,
+        "sd": 0.15,
+        "notes": "Meta awareness ads drive Google brand searches. "
+                 "~25% of Meta's adstocked signal spills into Google's channel. "
+                 "Common in DTC where Meta is the primary top-of-funnel driver."
+    },
+}
+
+
+def get_spillover_pairs(channel_names: list[str]) -> list[tuple[str, str, float, float]]:
+    """Return active spillover pairs based on which channels are present.
+
+    Returns list of (source, target, prior_mean, prior_sd) tuples.
+    Only returns pairs where both source and target channels exist in the data.
+    """
+    pairs = []
+    for key, prior in SPILLOVER_PRIORS.items():
+        source, target = key.split("->")
+        if source in channel_names and target in channel_names:
+            pairs.append((source, target, prior["mean"], prior["sd"]))
+    return pairs
 
 
 def get_channel_prior(channel_name: str) -> ChannelPrior:
