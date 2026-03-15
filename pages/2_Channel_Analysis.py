@@ -71,7 +71,10 @@ if results is None:
 # MAIN LAYOUT: data | context
 # ═══════════════════════════════════════════════════════════════
 
-# ── Section 1: ROAS Comparison ────────────────────────────────
+# ── Section 1: Efficiency Comparison ──────────────────────────
+_target_col = getattr(results, "target_col", "revenue")
+_ratio_label = "aMER" if _target_col == "new_revenue" else "MER" if _target_col == "revenue" else "ROAS"
+
 _m1, _c1 = st.columns([4, 1])
 with _m1:
     roas_df = results.channel_roas.copy()
@@ -94,21 +97,21 @@ with _m1:
         textposition="outside",
     ))
     fig_roas.add_hline(y=1.0, line_dash="dash", line_color="#E15759", annotation_text="Breakeven (1.0x)")
-    fig_roas.update_layout(title="Channel ROAS Comparison", yaxis_title="ROAS (Return on Ad Spend)", height=400, showlegend=False, **PLOTLY_LAYOUT)
+    fig_roas.update_layout(title=f"Channel {_ratio_label} Comparison", yaxis_title=_ratio_label, height=400, showlegend=False, **PLOTLY_LAYOUT)
     st.plotly_chart(fig_roas, use_container_width=True)
 
     email_roas = roas_df[roas_df["channel"] == "email"]
     if not email_roas.empty:
         email_row = email_roas.iloc[0]
         st.caption(
-            f"Email (Klaviyo) is excluded from the ROAS chart — it uses opens as the media variable, not spend. "
+            f"Email (Klaviyo) is excluded from the {_ratio_label} chart — it uses opens as the media variable, not spend. "
             f"Attributed revenue from email: **{email_row['total_contribution']:,.0f}**."
         )
 
 with _c1:
     context_block(
-        "ROAS Comparison",
-        "Bars show the model's best estimate of return on ad spend "
+        f"{_ratio_label} Comparison",
+        f"Bars show the model's best estimate of **{_ratio_label}** "
         "for each paid channel. Error bars are the **90% confidence interval**.\n\n"
         "The red dashed line is breakeven (1.0x) — below this line, the "
         "channel costs more than it returns in attributed revenue."

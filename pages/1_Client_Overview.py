@@ -69,15 +69,15 @@ with main_top:
     with col3:
         target_type = st.selectbox(
             "Revenue target",
-            ["Total Revenue", "New Customer Revenue", "Returning Customer Revenue"],
+            ["Total Revenue", "New Customer Net Sales", "Returning Customer Revenue"],
             index=0,
-            help="Which revenue metric to model. 'New Customer Revenue' is recommended "
+            help="Which revenue metric to model. 'New Customer Net Sales' is recommended "
                  "for evaluating paid media effectiveness."
         )
 
     target_col_map = {
         "Total Revenue": "revenue",
-        "New Customer Revenue": "new_revenue",
+        "New Customer Net Sales": "new_revenue",
         "Returning Customer Revenue": "returning_revenue",
     }
 
@@ -122,12 +122,12 @@ with ctx_top:
         "Upload weekly **Shopify analytics exports** (Sales over time) "
         "for new customers and returning customers separately.\n\n"
         "Expected columns: `Week`, `Total returns`, `Net sales`.\n\n"
-        "**New Customer Revenue** is the recommended target for evaluating "
+        "**New Customer Net Sales** is the recommended target for evaluating "
         "paid media — returning customers would buy regardless of ads."
     )
     context_tip(
         "**Tip:** For the Spend-aMER planner to work, "
-        "re-run the model with **New Customer Revenue** selected."
+        "re-run the model with **New Customer Net Sales** selected."
     )
 
 
@@ -331,29 +331,51 @@ _m1, _c1 = st.columns([4, 1])
 with _m1:
     col1, col2, col3, col4 = st.columns(4)
 
+    target_col = getattr(results, "target_col", "revenue")
     total_revenue = results.actual.sum()
     paid_roas = results.channel_roas[results.channel_roas["channel"] != "email"]
     total_spend = paid_roas["total_spend"].sum()
     blended_roas = total_revenue / (total_spend + 1e-8)
 
+    # Labels depend on what the model was fitted to
+    if target_col == "new_revenue":
+        rev_label = "NC Net Sales"
+        ratio_label = "aMER"
+    elif target_col == "returning_revenue":
+        rev_label = "Returning Revenue"
+        ratio_label = "MER (Returning)"
+    else:
+        rev_label = "Total Revenue"
+        ratio_label = "MER"
+
     with col1:
-        st.metric("Total Revenue", f"{total_revenue:,.0f}")
+        st.metric(rev_label, f"{total_revenue:,.0f}")
     with col2:
         st.metric("Total Ad Spend", f"{total_spend:,.0f}")
     with col3:
-        st.metric("Blended ROAS", f"{blended_roas:.2f}x")
+        st.metric(ratio_label, f"{blended_roas:.2f}x")
     with col4:
         st.metric("Model Fit (R²)", f"{results.r_squared:.3f}")
 
 with _c1:
-    context_block(
-        "Summary Cards",
-        "High-level KPIs from the fitted model.\n\n"
-        "**ROAS** above 1.0x means each SEK of ad spend generates "
-        "more than 1 SEK of attributed revenue.\n\n"
-        "**R²** measures how well the model explains weekly revenue "
-        "variation. Above 0.85 is good; below 0.7 means interpret with caution."
-    )
+    if target_col == "new_revenue":
+        context_block(
+            "Summary Cards",
+            "High-level KPIs from the fitted model (fitted to **New Customer Net Sales**).\n\n"
+            "**aMER** (acquisition MER) = NC net sales / ad spend. "
+            "Above 1.0x means each SEK of spend generates more than 1 SEK in new customer revenue.\n\n"
+            "**R²** measures how well the model explains weekly variation. "
+            "Above 0.85 is good; below 0.7 means interpret with caution."
+        )
+    else:
+        context_block(
+            "Summary Cards",
+            "High-level KPIs from the fitted model.\n\n"
+            "**MER** (marketing efficiency ratio) = total revenue / ad spend. "
+            "Above 1.0x means each SEK of spend generates more than 1 SEK of revenue.\n\n"
+            "**R²** measures how well the model explains weekly revenue "
+            "variation. Above 0.85 is good; below 0.7 means interpret with caution."
+        )
 
 
 # ── Section 2: Weekly Spend + Spend Waterfall ─────────────────
@@ -540,7 +562,11 @@ with _c4:
 # ── Section 5: Channel ROAS ──────────────────────────────────
 _m5, _c5 = st.columns([4, 1])
 with _m5:
-    st.subheader("Channel ROAS")
+    # Ratio label for this section depends on revenue target
+    _roas_label = "aMER" if target_col == "new_revenue" else "MER" if target_col == "revenue" else "ROAS"
+    _rev_attr_label = "Attributed NC Net Sales" if target_col == "new_revenue" else "Attributed Revenue"
+
+    st.subheader(f"Channel {_roas_label}")
 
     roas_display = results.channel_roas.copy()
 
@@ -568,8 +594,8 @@ with _m5:
         paid_display[["channel_display", "spend_display", "contribution_display", "roas_display", "90% CI"]].rename(columns={
             "channel_display": "Channel",
             "spend_display": "Total Spend",
-            "contribution_display": "Attributed Revenue",
-            "roas_display": "ROAS",
+            "contribution_display": _rev_attr_label,
+            "roas_display": _roas_label,
             "90% CI": "90% Confidence Interval",
         }),
         hide_index=True,
@@ -581,7 +607,7 @@ with _m5:
         channel_names = ", ".join(low_spend_channels["channel"].str.replace("_", " ").str.title())
         st.caption(
             f"\\* **Low-spend channels ({channel_names})**: These channels represent less than "
-            f"5% of total ad spend. Their ROAS estimates are unreliable due to limited data — "
+            f"5% of total ad spend. Their {_roas_label} estimates are unreliable due to limited data — "
             f"the model cannot confidently separate their effect from noise at this scale."
         )
 
@@ -592,20 +618,20 @@ with _m5:
         with ecol1:
             st.metric("Total Opens (model input)", f"{email_row['total_spend']:,.0f}")
         with ecol2:
-            st.metric("Attributed Revenue", f"{email_row['total_contribution']:,.0f}")
+            st.metric(_rev_attr_label, f"{email_row['total_contribution']:,.0f}")
         st.caption(
-            "Email uses weekly opens as the media variable (not spend), so ROAS is not applicable. "
+            "Email uses weekly opens as the media variable (not spend), so a spend-based ratio is not applicable. "
             "The attributed revenue reflects the model's estimate of revenue driven by email activity."
         )
 
 with _c5:
     context_block(
-        "Channel ROAS",
-        "Return on Ad Spend by channel. Higher is better, but "
+        f"Channel {_roas_label}",
+        f"**{_roas_label}** by channel. Higher is better, but "
         "watch the **90% confidence interval** — wide CIs mean "
         "the estimate is unreliable.\n\n"
         "Channels marked with * have less than 5% of total spend. "
-        "Their ROAS is noisy and shouldn't drive big decisions."
+        f"Their {_roas_label} is noisy and shouldn't drive big decisions."
     )
     context_tip(
         "**Next step:** Head to **Channel Analysis** for saturation "
@@ -618,7 +644,7 @@ _m6, _c6 = st.columns([4, 1])
 with _m6:
     st.subheader("Insights & Recommendations")
 
-    def generate_insights(results):
+    def generate_insights(results, ratio_label="MER"):
         """Generate actionable insights from model results, flagging uncertainties."""
         roas_df = results.channel_roas.copy()
         params = results.channel_params
@@ -683,7 +709,7 @@ with _m6:
                     "grey",
                     f"{ch_display} — too little spend to read clearly",
                     f"Only **{spend_share:.1f}%** of total ad budget. The model estimates "
-                    f"**{roas_mean:.1f}x ROAS** but the 90% CI is {roas_lo:.1f}x – {roas_hi:.1f}x. "
+                    f"**{roas_mean:.1f}x {ratio_label}** but the 90% CI is {roas_lo:.1f}x – {roas_hi:.1f}x. "
                     f"At this scale, the signal is buried in noise. Either scale up to test properly "
                     f"or reallocate this budget to higher-confidence channels.",
                     "warning",
@@ -692,7 +718,7 @@ with _m6:
                 insights.append((
                     "grey",
                     f"{ch_display} — wide uncertainty range",
-                    f"ROAS is estimated at **{roas_mean:.1f}x** but the 90% CI spans "
+                    f"{ratio_label} is estimated at **{roas_mean:.1f}x** but the 90% CI spans "
                     f"**{roas_lo:.1f}x – {roas_hi:.1f}x** — too wide to act on with high confidence. "
                     f"This often means the channel's week-to-week spend variation is low, making it hard "
                     f"for the model to isolate its effect. Consider running deliberate spend tests "
@@ -703,7 +729,7 @@ with _m6:
                 insights.append((
                     "action",
                     f"{ch_display} — below breakeven ({roas_mean:.2f}x)",
-                    f"ROAS is **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
+                    f"{ratio_label} is **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
                     f"Even the optimistic end of the range is marginal. Consider reducing spend "
                     f"and reinvesting in better-performing channels — unless this channel serves "
                     f"a top-of-funnel awareness goal that the model can't fully capture.",
@@ -714,7 +740,7 @@ with _m6:
                     "grey",
                     f"{ch_display} — below breakeven but uncertain ({roas_mean:.2f}x)",
                     f"Point estimate is **{roas_mean:.2f}x** but the CI reaches up to **{roas_hi:.1f}x**. "
-                    f"The true ROAS might be above breakeven. Don't cut spend drastically — instead "
+                    f"The true {ratio_label} might be above breakeven. Don't cut spend drastically — instead "
                     f"gather more data or run controlled spend tests to narrow the range.",
                     "warning",
                 ))
@@ -722,7 +748,7 @@ with _m6:
                 insights.append((
                     "ok",
                     f"{ch_display} — modest return ({roas_mean:.2f}x)",
-                    f"ROAS of **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
+                    f"{ratio_label} of **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
                     f"Positive but not exceptional. Hold current spend. If the saturation curve "
                     f"shows room to grow, a modest increase could be worthwhile as a test.",
                     "info",
@@ -731,7 +757,7 @@ with _m6:
                 insights.append((
                     "action",
                     f"{ch_display} — strong return ({roas_mean:.2f}x)",
-                    f"ROAS of **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
+                    f"{ratio_label} of **{roas_mean:.2f}x** (90% CI: {roas_lo:.2f}x – {roas_hi:.2f}x). "
                     f"{'The confidence interval is tight — this is a reliable signal. ' if not ci_is_wide else ''}"
                     f"Check the saturation curve in Channel Analysis — if the channel isn't heavily "
                     f"saturated, scaling spend here is likely the highest-leverage move.",
@@ -745,7 +771,7 @@ with _m6:
                 f"R² = {results.r_squared:.2f} means the model explains {results.r_squared*100:.0f}% of "
                 f"revenue variance. The remaining {(1-results.r_squared)*100:.0f}% is driven by factors "
                 f"not in the model (e.g. PR, word-of-mouth, competitor activity, weather). "
-                f"All ROAS estimates should be treated as directional rather than precise.",
+                f"All {ratio_label} estimates should be treated as directional rather than precise.",
                 "warning",
             ))
         elif results.r_squared < 0.85:
@@ -753,14 +779,14 @@ with _m6:
                 "fit",
                 "Model fit is good but not airtight",
                 f"R² = {results.r_squared:.2f}. The model captures most revenue patterns but "
-                f"there are unexplained fluctuations. ROAS estimates are useful for relative "
+                f"there are unexplained fluctuations. {ratio_label} estimates are useful for relative "
                 f"comparison between channels, but exact numbers carry some uncertainty.",
                 "info",
             ))
 
         return insights
 
-    insights = generate_insights(results)
+    insights = generate_insights(results, ratio_label=_roas_label)
 
     for emoji_key, title, body, severity in insights:
         icon = {

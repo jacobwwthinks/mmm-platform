@@ -97,7 +97,7 @@ if results is None:
     st.markdown(
         "The Spend-aMER model uses the fitted MMM saturation curves to determine "
         "optimal spend levels. Run the model first on the **Client Overview** page, "
-        "using **New Customer Revenue** as the target."
+        "using **New Customer Net Sales** as the target."
     )
     st.stop()
 
@@ -105,13 +105,13 @@ if results is None:
 target_col = getattr(results, "target_col", "revenue")
 if target_col != "new_revenue":
     st.warning(
-        "### Model must be fit on New Customer Revenue\n\n"
+        "### Model must be fit on New Customer Net Sales\n\n"
         "The Spend-aMER model optimizes for **GP3 from new customers**. "
         "The current model was fit on "
         f"**{'Total Revenue' if target_col == 'revenue' else target_col.replace('_', ' ').title()}**, "
         "which includes returning customer revenue and would overstate the "
         "effect of paid media.\n\n"
-        "Go to **Client Overview**, select **New Customer Revenue** as the "
+        "Go to **Client Overview**, select **New Customer Net Sales** as the "
         "revenue target, and re-run the model."
     )
     st.stop()
@@ -1179,7 +1179,7 @@ with st.expander("Seasonal efficiency indices"):
 
 with st.expander("About this model"):
     st.markdown("""
-**GP3 = (New Customer Revenue × (1 + CLTV expansion) × GM2%) − Marketing Spend**
+**GP3 = (New Customer Net Sales × (1 + CLTV expansion) × GM2%) − Marketing Spend**
 
 The MMM gives us saturation curves per channel. This model layers unit economics
 on top to find the monthly spend level that maximizes profit. Each month gets a

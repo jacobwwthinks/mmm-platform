@@ -130,31 +130,45 @@ def inject_global_css():
         font-size: 0.82rem !important;
     }
 
-    /* ── Metric cards: dark boxes, centered, uppercase labels ── */
+    /* ── Metric cards ── */
+    /* Force equal height for tiles in the same row */
+    [data-testid="stHorizontalBlock"] {
+        align-items: stretch !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] > div:first-child {
+        height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
     [data-testid="stMetric"],
     [data-testid="metric-container"] {
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.06);
         border-radius: 8px;
-        padding: 14px 12px 12px 12px;
-        text-align: center;
-    }
-    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {
-        font-size: 1.15rem !important;
-        font-weight: 400 !important;
-        justify-content: center !important;
+        padding: 16px 16px 14px 16px;
+        text-align: left;
+        flex: 1 !important;
     }
     [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p,
     [data-testid="stMetricLabel"] div {
-        font-size: 0.62rem !important;
+        font-size: 0.65rem !important;
         text-transform: uppercase !important;
-        letter-spacing: 0.08em !important;
-        font-weight: 300 !important;
-        justify-content: center !important;
+        letter-spacing: 0.06em !important;
+        font-weight: 500 !important;
+        color: rgba(255, 255, 255, 0.45) !important;
+        justify-content: flex-start !important;
+        margin-bottom: 2px !important;
+    }
+    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {
+        font-size: 1.5rem !important;
+        font-weight: 600 !important;
+        color: rgba(255, 255, 255, 0.92) !important;
+        justify-content: flex-start !important;
+        line-height: 1.2 !important;
     }
     [data-testid="stMetricDelta"], [data-testid="stMetricDelta"] div {
-        font-size: 0.65rem !important;
-        justify-content: center !important;
+        font-size: 0.7rem !important;
+        justify-content: flex-start !important;
     }
 
     /* ── Tables/dataframes ── */
@@ -183,6 +197,15 @@ def render_sidebar():
     has been initialised (selected_client, client_config, config).
     """
     inject_global_css()
+
+    # Logo
+    st.sidebar.markdown(
+        '<div style="padding: 4px 0 10px 0; margin-bottom: 2px;">'
+        '<span style="font-family: \'Inter\', sans-serif; font-weight: 900; '
+        'font-size: 1.05rem; letter-spacing: 0.04em; color: white; '
+        'line-height: 1.1;">ORANGE JUICE.</span></div>',
+        unsafe_allow_html=True,
+    )
 
     st.sidebar.page_link("app.py", label="Home")
     st.sidebar.page_link("pages/1_Client_Overview.py", label="Client Overview")
