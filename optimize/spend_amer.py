@@ -347,28 +347,27 @@ def find_optimal_spend(
     max_spend_mult: float = 5.0,
 ) -> dict:
     """
-    Compute the recommended weekly spend grounded in historical data.
+    Find the spend level that maximises 365-day GP3 given unit economics.
 
-    Philosophy: the best predictor of what you can spend next month is what
-    you spent in the same context historically. The model's saturation curves
-    are used to compute GP3 and aMER at that spend level — but NOT to find
-    a theoretical maximum (which pushes to unrealistic levels).
+    Philosophy: The *optimal aMER* is primarily determined by the unit
+    economics (GM2%, CLTV expansion) and the saturation curves. A brand
+    with 125% CLTV expansion can profitably acquire customers at aMER ~1.0,
+    whereas a brand with 0% CLTV needs aMER > 1/GM2%.
 
-    Recommendation formula:
-        recommended = historical_avg_weekly × seasonal_multiplier × (1 + yoy_growth%)
+    The optimizer finds the spend level where marginal 365D GP3 = 0, i.e.
+    where the next dollar of spend no longer generates enough lifetime
+    gross profit to justify itself. Beyond observed data the extrapolation
+    confidence discount dampens predictions, which naturally prevents
+    runaway spend recommendations.
 
-    Where:
-        - historical_avg_weekly is the average weekly spend across all channels
-        - seasonal_multiplier encodes seasonal efficiency + event boosts
-          (e.g. 1.5 in November with Black Week, 0.8 in April)
-        - yoy_growth_pct reflects brand growth (0% = same as last year)
+    Seasonal context enters via seasonal_multiplier on the revenue side:
+    a month with seasonal_multiplier=1.5 generates 50% more revenue per
+    unit of spend, so the optimizer will recommend higher spend (the
+    saturation curve shifts right). This produces spend that varies by
+    month but aMER that stays in a relatively narrow band — exactly
+    matching real-world behaviour.
 
-    This produces:
-        - Spend that varies by month (driven by seasonal context)
-        - aMER in a relatively narrow band (because spend scales with efficiency)
-        - Recommendations grounded in historical reality
-
-    Returns dict with recommended spend, GP3 (both first-order and 365D),
+    Returns dict with optimal spend, GP3 (both first-order and 365D),
     both breakeven aMER thresholds, channel allocation, and current comparison.
     """
     params = results.channel_params
@@ -407,24 +406,14 @@ def find_optimal_spend(
         gp3_365d = total_new_rev * cltv_mult * gm2_frac - total_spend
         return total_new_rev, channel_rev, gp3_first_order, gp3_365d
 
-    # ── Practical recommendation: scale from historical base ──
+    # ── Find spend that maximises 365D GP3 ──
     #
-    # Historical avg weekly spend IS the best anchor. Scale it by:
-    #   - seasonal_multiplier: months with higher efficiency support more spend
-    #   - yoy_growth: brand growing → can spend more at same aMER
-    #
-    # This keeps aMER in a narrow band across months (because spend scales
-    # proportionally to efficiency), which matches real-world behaviour.
+    # The saturation curves + extrapolation confidence naturally limit how
+    # far the optimizer can push. With high CLTV expansion, the optimal
+    # aMER will be lower (more aggressive spending is profitable). With
+    # low CLTV, it stays conservative. This is the correct behaviour —
+    # the economics determine the right aMER, not historical habits.
 
-    growth_mult = 1 + yoy_growth_pct / 100
-    practical_spend = current_total * seasonal_multiplier * growth_mult
-
-    # Sanity: don't go below 30% of current or above 3x current
-    practical_spend = max(current_total * 0.3, min(current_total * 3.0, practical_spend))
-
-    opt_rev, opt_ch_rev, opt_gp3_fo, opt_gp3_365d = _compute_at_spend(practical_spend)
-
-    # ── Also find the theoretical GP3 peak for reference ──
     def neg_gp3_365d(total_spend):
         if total_spend <= 0:
             return -(organic_weekly_revenue * cltv_mult * gm2_frac)
@@ -436,15 +425,29 @@ def find_optimal_spend(
         bounds=(0, current_total * max_spend_mult),
         method="bounded",
     )
-    theoretical_spend = result.x
-    at_upper_bound = theoretical_spend >= current_total * max_spend_mult * 0.95
+    optimal_spend = result.x
+    at_upper_bound = optimal_spend >= current_total * max_spend_mult * 0.95
+
+    # Apply YoY growth on top of the optimizer's recommendation:
+    # if the brand is growing, scale the optimal spend accordingly
+    growth_mult = 1 + yoy_growth_pct / 100
+    optimal_spend *= growth_mult
+
+    # Compute metrics at the recommended spend level
+    opt_rev, opt_ch_rev, opt_gp3_fo, opt_gp3_365d = _compute_at_spend(optimal_spend)
+
+    # Marginal aMER at the optimal point (numerical derivative)
+    _eps = current_total * 0.001
+    rev_plus, _, _, _ = _compute_at_spend(optimal_spend + _eps)
+    rev_minus, _, _, _ = _compute_at_spend(optimal_spend - _eps)
+    marginal_amer = (rev_plus - rev_minus) / (2 * _eps) if _eps > 0 else 0
 
     # Channel breakdown at recommended spend
-    eff_cal_opt = _effective_calibration(calibration_factor, practical_spend, current_total)
-    extrap_conf_opt = _extrapolation_confidence(practical_spend, current_total)
+    eff_cal_opt = _effective_calibration(calibration_factor, optimal_spend, current_total)
+    extrap_conf_opt = _extrapolation_confidence(optimal_spend, current_total)
     channel_allocation = {}
     for ch in channels:
-        ch_spend = practical_spend * alloc_ratios.get(ch, 1 / len(channels))
+        ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
         ch_rev *= eff_cal_opt * extrap_conf_opt * seasonal_multiplier
         channel_allocation[ch] = {
@@ -457,15 +460,16 @@ def find_optimal_spend(
     cur_rev, _, cur_gp3_fo, cur_gp3_365d = _compute_at_spend(current_total)
 
     return {
-        "optimal_weekly_spend": practical_spend,
-        "optimal_monthly_spend": practical_spend * 4.33,
+        "optimal_weekly_spend": optimal_spend,
+        "optimal_monthly_spend": optimal_spend * 4.33,
         "optimal_gp3_first_order_weekly": opt_gp3_fo,
         "optimal_gp3_first_order_monthly": opt_gp3_fo * 4.33,
         "optimal_gp3_365d_weekly": opt_gp3_365d,
         "optimal_gp3_365d_monthly": opt_gp3_365d * 4.33,
         "new_customer_revenue_weekly": opt_rev,
         "new_customer_revenue_monthly": opt_rev * 4.33,
-        "amer_at_optimal": opt_rev / (practical_spend + 1e-8) if practical_spend > 1 else 0,
+        "amer_at_optimal": opt_rev / (optimal_spend + 1e-8) if optimal_spend > 1 else 0,
+        "marginal_amer_at_optimal": marginal_amer,
         "breakeven_amer_first_order": breakeven_amer_first_order,
         "breakeven_amer_365d": breakeven_amer_365d,
         "channel_allocation": channel_allocation,
@@ -476,9 +480,7 @@ def find_optimal_spend(
         "current_gp3_365d_weekly": cur_gp3_365d,
         "current_gp3_365d_monthly": cur_gp3_365d * 4.33,
         "current_amer": cur_rev / (current_total + 1e-8),
-        "spend_change_pct": (practical_spend - current_total) / (current_total + 1e-8) * 100,
-        "theoretical_max_weekly_spend": theoretical_spend,
-        "theoretical_max_monthly_spend": theoretical_spend * 4.33,
+        "spend_change_pct": (optimal_spend - current_total) / (current_total + 1e-8) * 100,
         "at_upper_bound": at_upper_bound,
     }
 
