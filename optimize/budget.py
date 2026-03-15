@@ -21,6 +21,7 @@ def optimize_budget(
     total_budget: Optional[float] = None,
     min_spend_pct: float = 0.05,
     max_spend_pct: float = 0.80,
+    seasonal_multiplier: float = 1.0,
 ) -> pd.DataFrame:
     """
     Find the optimal budget allocation across channels.
@@ -34,6 +35,7 @@ def optimize_budget(
         total_budget: Total weekly budget to allocate (default: current total)
         min_spend_pct: Minimum % of budget per channel (prevents zeroing out)
         max_spend_pct: Maximum % of budget per channel
+        seasonal_multiplier: Combined seasonal + event efficiency multiplier
     Returns:
         DataFrame with current vs. recommended allocation
     """
@@ -65,7 +67,7 @@ def optimize_budget(
             adstocked = geometric_adstock(weekly_spend, p["adstock_decay"], max_lag=8)
             saturated = hill_saturation(adstocked, p["saturation_alpha"], p["saturation_lam"])
             total_rev += p["beta"] * saturated.mean()  # average weekly contribution
-        return total_rev
+        return total_rev * seasonal_multiplier
 
     def neg_revenue(allocation):
         return -predicted_revenue(allocation)
@@ -130,6 +132,7 @@ def optimize_budget(
 def scenario_analysis(
     results,
     budget_multipliers: list[float] = [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.5],
+    seasonal_multiplier: float = 1.0,
 ) -> pd.DataFrame:
     """
     Run multiple budget scenarios to show diminishing returns at portfolio level.
@@ -157,7 +160,7 @@ def scenario_analysis(
         budget = current_total * mult
 
         # Optimize for this budget level
-        opt_df = optimize_budget(results, total_budget=budget)
+        opt_df = optimize_budget(results, total_budget=budget, seasonal_multiplier=seasonal_multiplier)
 
         scenarios.append({
             "budget_multiplier": mult,
