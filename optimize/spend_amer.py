@@ -183,8 +183,8 @@ def _effective_calibration(
     Apply calibration with diminishing weight as spend moves beyond observed data.
 
     At historical average spend, full calibration is applied (we have evidence).
-    Beyond 1.5x historical, calibration fades linearly toward 1.0.
-    Beyond 3x historical, no calibration correction at all.
+    Beyond 1.2x historical, calibration fades linearly toward 1.0.
+    Beyond 2x historical, no calibration correction at all.
 
     This prevents the optimizer from extrapolating an aggressive calibration
     factor into spend ranges where we have no data.
@@ -194,14 +194,14 @@ def _effective_calibration(
 
     spend_ratio = total_spend / (historical_avg_spend + 1e-8)
 
-    # Full calibration up to 1.5x historical, then linear fade to 1.0 by 3x
-    if spend_ratio <= 1.5:
+    # Full calibration up to 1.2x historical, then linear fade to 1.0 by 2x
+    if spend_ratio <= 1.2:
         return calibration_factor
-    elif spend_ratio >= 3.0:
+    elif spend_ratio >= 2.0:
         return 1.0
     else:
-        # Linear interpolation: 1.5 → full, 3.0 → 1.0
-        fade = (spend_ratio - 1.5) / 1.5  # 0 at 1.5x, 1 at 3.0x
+        # Linear interpolation: 1.2 → full, 2.0 → 1.0
+        fade = (spend_ratio - 1.2) / 0.8  # 0 at 1.2x, 1 at 2.0x
         return calibration_factor + (1.0 - calibration_factor) * fade
 
 
@@ -217,19 +217,24 @@ def _extrapolation_confidence(
     become increasingly unreliable. This function applies a confidence discount
     so the optimizer doesn't treat extrapolated predictions as trustworthy.
 
-    Without this, GP3 can stay positive at very high spend (because organic
-    revenue subsidizes it), leading the optimizer to recommend the same
-    max-spend for every month regardless of seasonal context.
+    The discount is deliberately aggressive because:
+    - CLTV expansion (e.g. 125%) shifts the GP3 breakeven to very low aMER,
+      meaning the optimizer will chase high spend unless extrapolation is
+      strongly penalised.
+    - In practice, brands can rarely scale spend more than 30-50% beyond
+      prior peaks without hitting creative fatigue, audience saturation, or
+      operational constraints the model can't see.
 
-    The discount is calibrated so that:
+    Calibrated so that:
       - At historical spend: full confidence (1.0)
-      - At 1.3x: ~95% confidence
-      - At 2.0x: ~65% confidence
-      - At 3.0x: ~30% confidence
+      - At 1.3x: ~75% confidence
+      - At 1.5x: ~55% confidence
+      - At 2.0x: ~25% confidence
+      - At 2.5x+: ~10% (floor)
 
-    Combined with seasonal_multiplier, this creates natural month-to-month
-    variation: strong months sustain higher spend before the discounted
-    GP3 turns negative.
+    This keeps recommendations grounded: a typical month should land within
+    +/- 30% of historical spend, and even a strong seasonal month (with 1.5x
+    multiplier) rarely exceeds +50%.
     """
     if historical_avg_spend <= 0:
         return 1.0
@@ -238,12 +243,12 @@ def _extrapolation_confidence(
 
     if ratio <= 1.0:
         return 1.0
-    elif ratio >= 3.5:
-        return 0.25
+    elif ratio >= 2.5:
+        return 0.10
 
-    # Smooth power-curve discount: starts gentle, steepens at higher spend
-    t = (ratio - 1.0) / 2.5  # 0 at 1x, 1.0 at 3.5x
-    return max(0.25, 1.0 - 0.75 * (t ** 1.4))
+    # Steep power-curve discount over the range 1.0x → 2.5x
+    t = (ratio - 1.0) / 1.5  # 0 at 1x, 1.0 at 2.5x
+    return max(0.10, 1.0 - 0.90 * (t ** 0.8))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -258,7 +263,7 @@ def compute_gp3_curve(
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
     n_points: int = 150,
-    max_spend_mult: float = 5.0,
+    max_spend_mult: float = 3.0,
 ) -> pd.DataFrame:
     """
     Compute GP3 at various total spend levels.
@@ -344,7 +349,7 @@ def find_optimal_spend(
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
     yoy_growth_pct: float = 0.0,
-    max_spend_mult: float = 5.0,
+    max_spend_mult: float = 3.0,
 ) -> dict:
     """
     Find the spend level that maximises 365-day GP3 given unit economics.

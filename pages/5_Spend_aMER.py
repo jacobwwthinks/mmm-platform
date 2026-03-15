@@ -533,7 +533,7 @@ with _m3:
         go.Scatter(
             x=gp3_plot["monthly_spend"],
             y=gp3_plot["total_new_customer_revenue"] * 4.33,
-            name="New customer revenue",
+            name="NC net sales",
             line=dict(color=TEAL, width=2, dash="dot"),
         ),
         secondary_y=True,
@@ -578,13 +578,14 @@ with _m3:
     )
 
     fig.update_layout(
-        height=420,
+        height=450,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=60),
         **PLOTLY_LAYOUT,
     )
     fig.update_xaxes(title_text="Monthly marketing spend (SEK)")
     fig.update_yaxes(title_text="GP3 (SEK/month)", secondary_y=False)
-    fig.update_yaxes(title_text="New customer revenue (SEK/month)", secondary_y=True)
+    fig.update_yaxes(title_text="New customer net sales (SEK/month)", secondary_y=True)
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -748,16 +749,20 @@ with _m5:
         alloc_display = alloc_df.copy()
         alloc_display["channel"] = alloc_display["channel"].str.replace("_", " ").str.title()
         alloc_display.columns = [c.replace("_", " ").title() for c in alloc_display.columns]
+        alloc_display = alloc_display.rename(columns={
+            "Monthly Revenue": "Monthly NC Net Sales",
+            "Weekly Revenue": "Weekly NC Net Sales",
+        })
 
         fmt_alloc = alloc_display.copy()
-        for col in ["Monthly Spend", "Weekly Spend", "Monthly Revenue", "Weekly Revenue"]:
+        for col in ["Monthly Spend", "Weekly Spend", "Monthly NC Net Sales", "Weekly NC Net Sales"]:
             if col in fmt_alloc.columns:
                 fmt_alloc[col] = fmt_alloc[col].apply(lambda x: f"{x:,.0f}")
         if "Pct" in fmt_alloc.columns:
             fmt_alloc["Pct"] = fmt_alloc["Pct"].apply(lambda x: f"{x}%")
 
         st.dataframe(
-            fmt_alloc[["Channel", "Monthly Spend", "Pct", "Monthly Revenue"]].rename(columns={
+            fmt_alloc[["Channel", "Monthly Spend", "Pct", "Monthly NC Net Sales"]].rename(columns={
                 "Pct": "Share",
             }),
             hide_index=True,
@@ -942,7 +947,7 @@ with _m6:
         overview_display[col] = overview_display[col].apply(lambda x: f"{x:,.0f}")
     overview_display["amer"] = overview_display["amer"].apply(lambda x: f"{x:.2f}x")
 
-    overview_display.columns = ["Month", "Status", "Spend", "GP3 (FO)", "GP3 (365D)", "aMER", "Revenue"]
+    overview_display.columns = ["Month", "Status", "Spend", "GP3 (FO)", "GP3 (365D)", "aMER", "NC Net Sales"]
     st.dataframe(overview_display, hide_index=True, use_container_width=True)
 
     # Annual totals
