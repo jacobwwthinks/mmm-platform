@@ -242,16 +242,78 @@ if fwd_df.empty:
 if "product_offering" not in fwd_df.columns:
     fwd_df["product_offering"] = 0
 
+# Build list of Monday dates for the next 12 months (forecast period)
+_fwd_start = cutoff - pd.Timedelta(days=cutoff.weekday())  # Monday of current week
+_fwd_mondays = pd.date_range(start=_fwd_start, periods=52, freq="W-MON")
+_existing_mondays = set()
+if not fwd_df.empty:
+    _existing_mondays = set(pd.to_datetime(fwd_df["week_start"]).dt.date)
+_available_mondays = [d.date() for d in _fwd_mondays if d.date() not in _existing_mondays]
+
+# Quick-add row
+if _available_mondays:
+    st.markdown("###### Add a week")
+    add_cols = st.columns([2, 1, 1, 1, 1, 2, 1])
+    with add_cols[0]:
+        _add_date = st.selectbox(
+            "Week",
+            options=_available_mondays,
+            format_func=lambda d: f"{d.strftime('%b %d, %Y')}",
+            label_visibility="collapsed",
+        )
+    with add_cols[1]:
+        _add_discount = st.selectbox("Discount", options=[0, 1, 2], index=0,
+                                      format_func=lambda x: ["None", "Light", "Heavy"][x],
+                                      label_visibility="collapsed")
+    with add_cols[2]:
+        _add_drop = st.checkbox("Drop", key="add_drop")
+    with add_cols[3]:
+        _add_offering = st.checkbox("Offering", key="add_offering")
+    with add_cols[4]:
+        _add_holiday = st.checkbox("Holiday", key="add_holiday")
+    with add_cols[5]:
+        _add_notes = st.text_input("Notes", key="add_notes", label_visibility="collapsed",
+                                    placeholder="Notes...")
+    with add_cols[6]:
+        if st.button("Add", type="primary", key="add_week_btn"):
+            new_row = pd.DataFrame([{
+                "week_start": pd.Timestamp(_add_date),
+                "discount_campaign": _add_discount,
+                "product_drop": int(_add_drop),
+                "product_offering": int(_add_offering),
+                "holiday": int(_add_holiday),
+                "notes": _add_notes,
+            }])
+            # Combine with existing forward events and save
+            if "product_offering" not in hist_df.columns:
+                hist_df["product_offering"] = 0
+            edit_cols_save = ["week_start", "discount_campaign", "product_drop",
+                              "product_offering", "holiday", "notes"]
+            combined = pd.concat([hist_df[edit_cols_save], fwd_df[edit_cols_save], new_row],
+                                  ignore_index=True)
+            combined = combined.sort_values("week_start").reset_index(drop=True)
+            combined.to_csv(events_path, index=False)
+            st.rerun()
+
+# Monday dropdown options for the selectbox column in the editor
+_all_monday_strs = [d.strftime("%Y-%m-%d") for d in _fwd_mondays]
+
 # Column order for editor
 edit_cols = ["week_start", "discount_campaign", "product_drop", "product_offering", "holiday", "notes"]
 fwd_edit = fwd_df[edit_cols].copy().reset_index(drop=True)
+# Convert week_start to string for selectbox display
+fwd_edit["week_start"] = pd.to_datetime(fwd_edit["week_start"]).dt.strftime("%Y-%m-%d")
 
 edited_fwd = st.data_editor(
     fwd_edit,
     use_container_width=True,
     num_rows="dynamic",
     column_config={
-        "week_start": st.column_config.DateColumn("Week Start", format="YYYY-MM-DD"),
+        "week_start": st.column_config.SelectboxColumn(
+            "Week Start",
+            options=_all_monday_strs,
+            help="Select a Monday from the forecast period",
+        ),
         "discount_campaign": st.column_config.NumberColumn(
             "Discount", min_value=0, max_value=2,
             help="0=none, 1=light, 2=heavy (Black Week/Birthday Week)",
@@ -265,9 +327,9 @@ edited_fwd = st.data_editor(
     key="fwd_events_editor",
 )
 
-if st.button("Save forward events", type="primary"):
+if st.button("Save forward events", type="primary", key="save_fwd_btn"):
     # Combine historical + edited forward events
-    edited_fwd["week_start"] = pd.to_datetime(edited_fwd["week_start"])
+    edited_fwd["week_start"] = pd.to_datetime(edited_fwd["week_start"], errors="coerce")
     # Drop rows with no week_start (empty added rows)
     edited_fwd = edited_fwd.dropna(subset=["week_start"])
 
