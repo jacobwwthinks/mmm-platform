@@ -107,11 +107,9 @@ event_boosts = compute_event_boosts(results, model_df, events_df)
 # MAIN LAYOUT: data | context
 # ═══════════════════════════════════════════════════════════════
 
-main, ctx = st.columns([4, 1])
-
-with main:
-    # ── Month Selector ──────────────────────────────────────────
-
+# ── Section 1: Planning Period ────────────────────────────────
+_m1, _c1 = st.columns([4, 1])
+with _m1:
     st.subheader("Planning Period")
 
     today = datetime.date.today()
@@ -127,15 +125,13 @@ with main:
         "Optimize for month",
         range(len(month_options)),
         format_func=lambda i: month_options[i]["label"],
-        help="Channel efficiency varies by month due to seasonality and events. "
-             "Pick the month you're planning for.",
+        help="Channel efficiency varies by month due to seasonality and events.",
     )
 
     sel = month_options[selected_month_idx]
     sel_month = sel["month"]
     sel_year = sel["year"]
 
-    # Compute seasonal + event multiplier for selected month
     seasonal_mult = seasonal_indices.get(sel_month, 1.0)
     event_boost = 1.0
     heavy_mult = event_boosts.get("heavy_discount", 1.0)
@@ -165,7 +161,6 @@ with main:
 
     effective_mult = seasonal_mult * event_boost
 
-    # Show month context
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Seasonal index", f"{seasonal_mult:.2f}x",
@@ -190,8 +185,19 @@ with main:
         if not has_any_events:
             st.caption(f"No events planned for {sel['label']}. Add events in the Event Calendar if needed.")
 
-    # ── Budget Controls ──────────────────────────────────────────
+with _c1:
+    context_block(
+        "Planning Period",
+        "Channel efficiency varies by month. A **seasonal index** above 1.0 "
+        "means spend converts better than average (e.g. November). "
+        "Below 1.0 means less efficient (e.g. January).\n\n"
+        "**Event boosts** come from the Event Calendar — campaigns "
+        "and product drops increase conversion efficiency."
+    )
 
+# ── Section 2: Budget Scenario + Optimization ─────────────────
+_m2, _c2 = st.columns([4, 1])
+with _m2:
     roas_df = results.channel_roas
     current_total_weekly = roas_df["total_spend"].sum() / results.n_weeks
 
@@ -199,7 +205,6 @@ with main:
 
     col1, col2 = st.columns(2)
     with col1:
-        # Round current budget to nearest 1,000 for clean slider steps
         budget_step = 5_000
         budget_min = max(budget_step, int(round(current_total_weekly * 0.25 / budget_step)) * budget_step)
         budget_max = int(round(current_total_weekly * 2.5 / budget_step)) * budget_step
@@ -207,13 +212,9 @@ with main:
 
         target_budget = st.slider(
             "Weekly budget (SEK)",
-            min_value=budget_min,
-            max_value=budget_max,
-            value=budget_default,
-            step=budget_step,
-            format="%,.0f",
-            help=f"Current average weekly spend: {current_total_weekly:,.0f} SEK. "
-                 f"Drag to explore different budget levels.",
+            min_value=budget_min, max_value=budget_max, value=budget_default,
+            step=budget_step, format="%,.0f",
+            help=f"Current average weekly spend: {current_total_weekly:,.0f} SEK.",
         )
         budget_change_pct = (target_budget - current_total_weekly) / current_total_weekly * 100
         st.metric("Weekly budget", f"{target_budget:,.0f} SEK", f"{budget_change_pct:+.1f}% vs current")
@@ -223,15 +224,11 @@ with main:
         min_pct = st.slider("Min % per channel", 0, 20, 5) / 100
         max_pct = st.slider("Max % per channel", 50, 100, 80) / 100
 
-    # ── Run Optimization ─────────────────────────────────────────
-
     if st.button("Optimize Allocation", type="primary", use_container_width=True):
         with st.spinner("Optimizing..."):
             opt_df = optimize_budget(
-                results,
-                total_budget=target_budget,
-                min_spend_pct=min_pct,
-                max_spend_pct=max_pct,
+                results, total_budget=target_budget,
+                min_spend_pct=min_pct, max_spend_pct=max_pct,
                 seasonal_multiplier=effective_mult,
             )
             st.session_state["optimization"] = opt_df
@@ -240,7 +237,6 @@ with main:
     opt_df = st.session_state.get("optimization")
     opt_month = st.session_state.get("optimization_month")
 
-    # Re-run if month changed or no cached result
     if opt_df is None or opt_month != sel["key"]:
         opt_df = optimize_budget(
             results, total_budget=target_budget,
@@ -250,8 +246,6 @@ with main:
         st.session_state["optimization"] = opt_df
         st.session_state["optimization_month"] = sel["key"]
 
-    # ── Results ──────────────────────────────────────────────────
-
     lift_pct = opt_df.attrs.get("estimated_lift_pct", 0)
     if lift_pct > 0:
         st.success(f"Estimated revenue lift from reallocation: **+{lift_pct:.1f}%**")
@@ -260,18 +254,27 @@ with main:
     else:
         st.info("Current allocation is already near-optimal")
 
-    # ── Current vs Recommended Allocation ────────────────────────
+with _c2:
+    context_block(
+        "Budget Scenario",
+        "Set a weekly budget and constraints, then optimize. "
+        "The optimizer uses the model's saturation curves to "
+        "find the allocation that maximizes total revenue.\n\n"
+        "**Min/max %** prevents the optimizer from zeroing out "
+        "or overloading any single channel."
+    )
 
+# ── Section 3: Current vs Recommended ─────────────────────────
+_m3, _c3 = st.columns([4, 1])
+with _m3:
     st.subheader("Current vs. Recommended Allocation")
 
     col1, col2 = st.columns(2)
-
     with col1:
         st.markdown("**Current**")
         fig_current = go.Figure(go.Pie(
             labels=opt_df["channel"].str.replace("_", " ").str.title(),
-            values=opt_df["current_weekly_spend"],
-            hole=0.4,
+            values=opt_df["current_weekly_spend"], hole=0.4,
             marker_colors=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"],
         ))
         fig_current.update_layout(height=300, margin=dict(t=20, b=20), **PLOTLY_LAYOUT)
@@ -281,14 +284,11 @@ with main:
         st.markdown("**Recommended**")
         fig_recommended = go.Figure(go.Pie(
             labels=opt_df["channel"].str.replace("_", " ").str.title(),
-            values=opt_df["recommended_weekly_spend"],
-            hole=0.4,
+            values=opt_df["recommended_weekly_spend"], hole=0.4,
             marker_colors=["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"],
         ))
         fig_recommended.update_layout(height=300, margin=dict(t=20, b=20), **PLOTLY_LAYOUT)
         st.plotly_chart(fig_recommended, use_container_width=True)
-
-    # ── Detailed Recommendations Table ───────────────────────────
 
     st.subheader("Detailed Recommendations")
 
@@ -310,84 +310,10 @@ with main:
             "recommended_pct": "Rec. %",
             "change": "Change",
         }),
-        hide_index=True,
-        use_container_width=True,
+        hide_index=True, use_container_width=True,
     )
 
-    # ── Scenario Analysis ────────────────────────────────────────
-
-    st.subheader("Budget Scenario Analysis")
-    st.markdown("How does total revenue change as we scale budget up or down?")
-
-    with st.spinner("Running scenarios..."):
-        scenarios = scenario_analysis(results, seasonal_multiplier=effective_mult)
-
-    fig_scenario = go.Figure()
-    fig_scenario.add_trace(go.Scatter(
-        x=scenarios["weekly_budget"],
-        y=scenarios["estimated_weekly_revenue"],
-        mode="lines+markers",
-        line=dict(color="#F58518", width=3),
-        marker=dict(size=10),
-        name="Estimated Weekly Revenue",
-    ))
-
-    # Mark current budget
-    current_row = scenarios[scenarios["budget_multiplier"] == 1.0]
-    if not current_row.empty:
-        fig_scenario.add_trace(go.Scatter(
-            x=current_row["weekly_budget"],
-            y=current_row["estimated_weekly_revenue"],
-            mode="markers",
-            marker=dict(size=15, color="#E15759", symbol="star"),
-            name="Current Budget",
-        ))
-
-    fig_scenario.update_layout(
-        xaxis_title="Weekly Budget",
-        yaxis_title="Estimated Weekly Revenue",
-        height=350,
-        **PLOTLY_LAYOUT,
-    )
-    st.plotly_chart(fig_scenario, use_container_width=True)
-
-    # ── Export ────────────────────────────────────────────────────
-
-    with st.expander("Export Recommendations"):
-        csv = opt_df.to_csv(index=False)
-        st.download_button(
-            "Download as CSV",
-            csv,
-            file_name=f"budget_recommendation_{st.session_state.get('selected_client', 'client')}.csv",
-            mime="text/csv",
-        )
-
-
-# ── Context Panel (right column) ────────────────────────────
-
-with ctx:
-    context_block(
-        "Planning Period",
-        "Channel efficiency varies by month. A **seasonal index** above 1.0 "
-        "means spend converts better than average (e.g. November). "
-        "Below 1.0 means less efficient (e.g. January).\n\n"
-        "**Event boosts** come from the Event Calendar — campaigns "
-        "and product drops increase conversion efficiency."
-    )
-
-    context_separator()
-
-    context_block(
-        "Budget Scenario",
-        "Set a weekly budget and constraints, then optimize. "
-        "The optimizer uses the model's saturation curves to "
-        "find the allocation that maximizes total revenue.\n\n"
-        "**Min/max %** prevents the optimizer from zeroing out "
-        "or overloading any single channel."
-    )
-
-    context_separator()
-
+with _c3:
     context_block(
         "Current vs Recommended",
         "The pie charts show how budget is split today vs the "
@@ -397,8 +323,45 @@ with ctx:
         "recommended allocation would generate at the same total budget."
     )
 
-    context_separator()
+# ── Section 4: Scenario Analysis ──────────────────────────────
+_m4, _c4 = st.columns([4, 1])
+with _m4:
+    st.subheader("Budget Scenario Analysis")
+    st.markdown("How does total revenue change as we scale budget up or down?")
 
+    with st.spinner("Running scenarios..."):
+        scenarios = scenario_analysis(results, seasonal_multiplier=effective_mult)
+
+    fig_scenario = go.Figure()
+    fig_scenario.add_trace(go.Scatter(
+        x=scenarios["weekly_budget"], y=scenarios["estimated_weekly_revenue"],
+        mode="lines+markers", line=dict(color="#F58518", width=3),
+        marker=dict(size=10), name="Estimated Weekly Revenue",
+    ))
+
+    current_row = scenarios[scenarios["budget_multiplier"] == 1.0]
+    if not current_row.empty:
+        fig_scenario.add_trace(go.Scatter(
+            x=current_row["weekly_budget"], y=current_row["estimated_weekly_revenue"],
+            mode="markers", marker=dict(size=15, color="#E15759", symbol="star"),
+            name="Current Budget",
+        ))
+
+    fig_scenario.update_layout(
+        xaxis_title="Weekly Budget", yaxis_title="Estimated Weekly Revenue",
+        height=350, **PLOTLY_LAYOUT,
+    )
+    st.plotly_chart(fig_scenario, use_container_width=True)
+
+    with st.expander("Export Recommendations"):
+        csv = opt_df.to_csv(index=False)
+        st.download_button(
+            "Download as CSV", csv,
+            file_name=f"budget_recommendation_{st.session_state.get('selected_client', 'client')}.csv",
+            mime="text/csv",
+        )
+
+with _c4:
     context_block(
         "Scenario Analysis",
         "The curve shows revenue vs budget level. The flattening "
@@ -407,7 +370,6 @@ with ctx:
         "Look for the **inflection point** — beyond this, each "
         "additional SEK of spend yields less and less return."
     )
-
     context_tip(
         "**For GP3-aware planning** (accounting for margins and CLTV), "
         "use the **Spend-aMER** page instead. This optimizer focuses "

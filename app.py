@@ -63,9 +63,19 @@ h4, h4 span, h5, h5 span, h6, h6 span { font-size: 0.88rem !important; font-weig
     letter-spacing: normal !important;
 }
 [data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
 [data-testid="stSidebar"] label {
     font-size: 0.8rem !important;
+}
+/* Sidebar text spans — but NOT the collapse button icon */
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] span,
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] span {
+    font-size: 0.8rem !important;
+}
+/* Hide the sidebar collapse button icon-name leak */
+[data-testid="collapsedControl"] span,
+[data-testid="stSidebarCollapsedControl"] span,
+button[kind="headerNoPadding"] span {
+    font-size: 0 !important;
 }
 
 /* ── Metric cards: compact values and labels ── */

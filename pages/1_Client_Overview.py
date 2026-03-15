@@ -321,18 +321,15 @@ if results is None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# RESULTS DASHBOARD (full MMM results available)
+# RESULTS DASHBOARD — per-section row splits for vertical alignment
 # ═══════════════════════════════════════════════════════════════
 
-main, ctx = st.columns([4, 1])
-
-with main:
-    # ── Summary Cards ────────────────────────────────────────────
-
+# ── Section 1: Summary Cards ──────────────────────────────────
+_m1, _c1 = st.columns([4, 1])
+with _m1:
     col1, col2, col3, col4 = st.columns(4)
 
     total_revenue = results.actual.sum()
-    # Only sum actual paid ad spend (exclude email opens which aren't spend)
     paid_roas = results.channel_roas[results.channel_roas["channel"] != "email"]
     total_spend = paid_roas["total_spend"].sum()
     blended_roas = total_revenue / (total_spend + 1e-8)
@@ -346,11 +343,22 @@ with main:
     with col4:
         st.metric("Model Fit (R²)", f"{results.r_squared:.3f}")
 
-    # ── Historical Spend Build-Up by Channel ─────────────────────
+with _c1:
+    context_block(
+        "Summary Cards",
+        "High-level KPIs from the fitted model.\n\n"
+        "**ROAS** above 1.0x means each SEK of ad spend generates "
+        "more than 1 SEK of attributed revenue.\n\n"
+        "**R²** measures how well the model explains weekly revenue "
+        "variation. Above 0.85 is good; below 0.7 means interpret with caution."
+    )
 
+
+# ── Section 2: Weekly Spend + Spend Waterfall ─────────────────
+_m2, _c2 = st.columns([4, 1])
+with _m2:
     st.subheader("Weekly Spend by Channel")
 
-    # Load model_df from session or disk if needed
     if model_df is None:
         for base in [Path("."), Path(__file__).parent.parent]:
             mdf_path = base / "results" / selected_client / "model_df.pkl"
@@ -363,7 +371,6 @@ with main:
     if model_df is not None:
         spend_cols = [c for c in model_df.columns if c.endswith("_spend") and model_df[c].sum() > 0]
         if spend_cols:
-            # Build stacked area chart
             CHANNEL_COLORS = ["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"]
             fig_spend = go.Figure()
             for i, col in enumerate(spend_cols):
@@ -389,8 +396,6 @@ with main:
     else:
         st.caption("Run the model to see spend build-up by channel.")
 
-    # ── Marketing Spend Waterfall ─────────────────────────────────
-
     st.subheader("Marketing Spend by Channel")
 
     spend_waterfall_data = []
@@ -400,7 +405,6 @@ with main:
             ch_name = col.replace("_spend", "").replace("_", " ").title()
             spend_waterfall_data.append({"component": ch_name, "value": model_df[col].sum()})
     else:
-        # Fallback to ROAS table totals
         for _, row in results.channel_roas.iterrows():
             if row["channel"] == "email":
                 continue
@@ -411,9 +415,6 @@ with main:
         sw_df = pd.DataFrame(spend_waterfall_data)
         sw_df = pd.concat([sw_df, pd.DataFrame([{"component": "Total", "value": sw_df["value"].sum()}])], ignore_index=True)
         sw_measures = ["relative"] * (len(sw_df) - 1) + ["total"]
-
-        CHANNEL_COLORS_WF = ["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"]
-        bar_colors = CHANNEL_COLORS_WF[:len(sw_df) - 1] + ["#59A14F"]
 
         fig_spend_wf = go.Figure(go.Waterfall(
             x=sw_df["component"],
@@ -435,22 +436,36 @@ with main:
         )
         st.plotly_chart(fig_spend_wf, use_container_width=True)
 
-    # ── Revenue Decomposition Waterfall ──────────────────────────
+with _c2:
+    context_block(
+        "Weekly Spend",
+        "The stacked area chart shows how ad budget is distributed "
+        "across channels week by week. Look for consistency in the mix "
+        "and any seasonal patterns in total spend."
+    )
+    context_block(
+        "Spend Waterfall",
+        "Each bar adds one channel's total spend. The green **Total** "
+        "bar should match the Total Ad Spend metric above. "
+        "Email is excluded (it uses opens, not spend)."
+    )
 
+
+# ── Section 3: Revenue Decomposition ─────────────────────────
+_m3, _c3 = st.columns([4, 1])
+with _m3:
     st.subheader("Revenue Decomposition")
 
     contrib_df = results.channel_contributions
     total_rev = results.actual.sum()
     baseline_total = results.baseline_contribution.sum()
 
-    # Build waterfall data
     waterfall_data = [{"component": "Baseline (Organic)", "value": baseline_total}]
     for col in contrib_df.columns:
         if col == "week_start":
             continue
         waterfall_data.append({"component": col.replace("_", " ").title(), "value": contrib_df[col].sum()})
 
-    # Add controls
     ctrl_df = results.control_contributions
     for col in ctrl_df.columns:
         if col == "week_start":
@@ -460,8 +475,6 @@ with main:
             waterfall_data.append({"component": col.replace("_", " ").title(), "value": val})
 
     wf_df = pd.DataFrame(waterfall_data)
-
-    # Add total bar at the end
     wf_df = pd.concat([wf_df, pd.DataFrame([{"component": "Total", "value": wf_df["value"].sum()}])], ignore_index=True)
     measures = ["relative"] * (len(wf_df) - 1) + ["total"]
 
@@ -485,8 +498,21 @@ with main:
     )
     st.plotly_chart(fig_waterfall, use_container_width=True)
 
-    # ── Actual vs Predicted Time Series ──────────────────────────
+with _c3:
+    context_block(
+        "Revenue Decomposition",
+        "The waterfall shows where revenue comes from.\n\n"
+        "**Baseline** = organic revenue the brand would earn without any "
+        "paid media (brand strength, SEO, word-of-mouth).\n\n"
+        "Each channel bar = revenue attributed to that channel's ad spend. "
+        "A large baseline means the brand isn't dependent on ads — healthy "
+        "but means less leverage from budget changes."
+    )
 
+
+# ── Section 4: Model Fit ─────────────────────────────────────
+_m4, _c4 = st.columns([4, 1])
+with _m4:
     st.subheader("Actual vs. Model Predicted Revenue")
 
     if model_df is not None:
@@ -505,24 +531,32 @@ with main:
     )
     st.plotly_chart(fig_ts, use_container_width=True)
 
-    # ── ROAS Table ───────────────────────────────────────────────
+with _c4:
+    context_block(
+        "Model Fit",
+        "The actual vs predicted chart shows how closely the model "
+        "tracks reality. Tight fit = reliable decomposition. "
+        "Large gaps suggest missing factors (PR events, competitor "
+        "activity, stockouts) that the model can't capture."
+    )
 
+
+# ── Section 5: Channel ROAS ──────────────────────────────────
+_m5, _c5 = st.columns([4, 1])
+with _m5:
     st.subheader("Channel ROAS")
 
     roas_display = results.channel_roas.copy()
 
-    # Separate email (uses opens, not spend) from paid channels
     is_email = roas_display["channel"] == "email"
     paid_display = roas_display[~is_email].copy()
     email_display = roas_display[is_email].copy()
 
     total_paid_spend = paid_display["total_spend"].sum()
 
-    # Flag low-spend channels (< 5% of total paid spend)
     paid_display["spend_share"] = paid_display["total_spend"] / (total_paid_spend + 1e-8) * 100
     paid_display["is_low_spend"] = paid_display["spend_share"] < 5
 
-    # Format display columns for paid channels
     paid_display["channel_display"] = paid_display.apply(
         lambda r: r["channel"].replace("_", " ").title() + " *" if r["is_low_spend"] else r["channel"].replace("_", " ").title(),
         axis=1,
@@ -546,7 +580,6 @@ with main:
         use_container_width=True,
     )
 
-    # Show warning for low-spend channels
     low_spend_channels = paid_display[paid_display["is_low_spend"]]
     if not low_spend_channels.empty:
         channel_names = ", ".join(low_spend_channels["channel"].str.replace("_", " ").str.title())
@@ -556,7 +589,6 @@ with main:
             f"the model cannot confidently separate their effect from noise at this scale."
         )
 
-    # Show email separately (no ROAS since opens ≠ spend)
     if not email_display.empty:
         st.markdown("**Email (Klaviyo)**")
         email_row = email_display.iloc[0]
@@ -570,8 +602,24 @@ with main:
             "The attributed revenue reflects the model's estimate of revenue driven by email activity."
         )
 
-    # ── Actionable Insights ──────────────────────────────────────
+with _c5:
+    context_block(
+        "Channel ROAS",
+        "Return on Ad Spend by channel. Higher is better, but "
+        "watch the **90% confidence interval** — wide CIs mean "
+        "the estimate is unreliable.\n\n"
+        "Channels marked with * have less than 5% of total spend. "
+        "Their ROAS is noisy and shouldn't drive big decisions."
+    )
+    context_tip(
+        "**Next step:** Head to **Channel Analysis** for saturation "
+        "curves, or **Spend-aMER** for GP3-optimized monthly planning."
+    )
 
+
+# ── Section 6: Insights ──────────────────────────────────────
+_m6, _c6 = st.columns([4, 1])
+with _m6:
     st.subheader("Insights & Recommendations")
 
     def generate_insights(results):
@@ -582,9 +630,8 @@ with main:
         baseline_total = results.baseline_contribution.sum()
         baseline_pct = baseline_total / total_revenue * 100
 
-        insights = []  # list of (emoji, title, body, severity)
+        insights = []
 
-        # ── Baseline dominance check ──
         if baseline_pct > 80:
             insights.append((
                 "organic",
@@ -604,7 +651,6 @@ with main:
                 "success",
             ))
 
-        # ── Per-channel insights ──
         paid_channels = roas_df[roas_df["channel"] != "email"]
         total_paid_spend = paid_channels["total_spend"].sum()
 
@@ -632,17 +678,8 @@ with main:
             roas_hi = row["roas_95"]
             ci_width = roas_hi - roas_lo
             spend_share = row["total_spend"] / (total_paid_spend + 1e-8) * 100
-            contrib = row["total_contribution"]
 
-            # Saturation level
-            ch_params = params.get(ch, {})
-            sat_alpha = ch_params.get("saturation_alpha", 1)
-            sat_lam = ch_params.get("saturation_lam", 1)
-
-            # Is the confidence interval too wide to be actionable?
             ci_is_wide = ci_width > 3.0 or (roas_mean > 0 and ci_width / (roas_mean + 1e-8) > 1.5)
-
-            # Low spend → noisy
             is_low_spend = spend_share < 5
 
             if is_low_spend:
@@ -705,7 +742,6 @@ with main:
                     "success",
                 ))
 
-        # ── Model fit caveat ──
         if results.r_squared < 0.7:
             insights.append((
                 "grey",
@@ -756,8 +792,6 @@ with main:
         "controlled geo-lift or holdout experiments."
     )
 
-    # ── Model Quality ────────────────────────────────────────────
-
     with st.expander("Model Diagnostics"):
         checks = assess_model_quality(results)
         for check_name, check_data in checks.items():
@@ -765,73 +799,7 @@ with main:
             value_str = f" ({check_data['value']:.3f})" if "value" in check_data else ""
             st.markdown(f"{status_icon} **{check_name}**{value_str}: {check_data['note']}")
 
-
-# ── Context Panel (right column) ────────────────────────────
-
-with ctx:
-    context_block(
-        "Summary Cards",
-        "High-level KPIs from the fitted model.\n\n"
-        "**ROAS** above 1.0x means each SEK of ad spend generates "
-        "more than 1 SEK of attributed revenue.\n\n"
-        "**R²** measures how well the model explains weekly revenue "
-        "variation. Above 0.85 is good; below 0.7 means interpret with caution."
-    )
-
-    context_separator()
-
-    context_block(
-        "Weekly Spend",
-        "The stacked area chart shows how ad budget is distributed "
-        "across channels week by week. Look for consistency in the mix "
-        "and any seasonal patterns in total spend."
-    )
-
-    context_block(
-        "Spend Waterfall",
-        "Each bar adds one channel's total spend. The green **Total** "
-        "bar should match the Total Ad Spend metric above. "
-        "Email is excluded (it uses opens, not spend)."
-    )
-
-    context_separator()
-
-    context_block(
-        "Revenue Decomposition",
-        "The waterfall shows where revenue comes from.\n\n"
-        "**Baseline** = organic revenue the brand would earn without any "
-        "paid media (brand strength, SEO, word-of-mouth).\n\n"
-        "Each channel bar = revenue attributed to that channel's ad spend. "
-        "A large baseline means the brand isn't dependent on ads — healthy "
-        "but means less leverage from budget changes."
-    )
-
-    context_separator()
-
-    context_block(
-        "Model Fit",
-        "The actual vs predicted chart shows how closely the model "
-        "tracks reality. Tight fit = reliable decomposition. "
-        "Large gaps suggest missing factors (PR events, competitor "
-        "activity, stockouts) that the model can't capture."
-    )
-
-    context_separator()
-
-    context_block(
-        "Channel ROAS",
-        "Return on Ad Spend by channel. Higher is better, but "
-        "watch the **90% confidence interval** — wide CIs mean "
-        "the estimate is unreliable.\n\n"
-        "Channels marked with * have less than 5% of total spend. "
-        "Their ROAS is noisy and shouldn't drive big decisions."
-    )
-
-    context_tip(
-        "**Next step:** Head to **Channel Analysis** for saturation "
-        "curves, or **Spend-aMER** for GP3-optimized monthly planning."
-    )
-
+with _c6:
     context_block(
         "Insights",
         "Auto-generated interpretations from the model parameters. "

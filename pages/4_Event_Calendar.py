@@ -78,11 +78,9 @@ else:
 # MAIN LAYOUT: data | context
 # ═══════════════════════════════════════════════════════════════
 
-main, ctx = st.columns([4, 1])
-
-with main:
-    # ── Download / Upload controls ────────────────────────────
-
+# ── Section 1: Controls + Forward Events ──────────────────────
+_m1, _c1 = st.columns([4, 1])
+with _m1:
     col_dl, col_ul = st.columns(2)
 
     with col_dl:
@@ -374,10 +372,49 @@ with main:
         st.rerun()
 
 
-    # ═══════════════════════════════════════════════════════════════
-    # HISTORICAL CALENDAR (read-only)
-    # ═══════════════════════════════════════════════════════════════
+with _c1:
+    context_block(
+        "Why Events Matter",
+        "The MMM and Spend-aMER models use events to understand "
+        "**why** certain weeks had higher efficiency. Without forward events, "
+        "the model assumes no campaign boost — significantly underestimating "
+        "spend capacity during discount months."
+    )
+    context_separator()
+    context_block(
+        "Discount Levels",
+        "**0** = no discount that week\n"
+        "**1** = light discount (10-20% off, limited scope)\n"
+        "**2** = heavy discount (Black Week, Birthday Week, sitewide)\n\n"
+        "Heavy discounts typically boost channel efficiency by 30-50% — "
+        "meaning you can spend more while maintaining aMER."
+    )
+    context_separator()
+    context_block(
+        "Product Drops",
+        "New product launches create organic demand spikes and "
+        "improve ad conversion rates. Mark weeks with significant "
+        "new product releases.\n\n"
+        "The model learns how product drops affect revenue and "
+        "accounts for this in future planning."
+    )
+    context_separator()
+    context_block(
+        "Forward Planning",
+        "Add your planned campaigns, product launches, and "
+        "key dates for the next 12 months. The more complete "
+        "this calendar is, the better the Spend-aMER recommendations."
+    )
+    context_tip(
+        "**Common mistake:** Leaving future months empty. "
+        "Even if you don't have exact dates, mark approximate "
+        "weeks for known campaigns (Black Week, summer sale, etc.)."
+    )
 
+
+# ── Section 2: Historical Events ──────────────────────────────
+_m2, _c2 = st.columns([4, 1])
+with _m2:
     st.markdown("---")
     st.subheader("Historical Events")
     st.markdown(
@@ -440,10 +477,6 @@ with main:
         st.info("No historical events found.")
 
 
-    # ═══════════════════════════════════════════════════════════════
-    # SMS SPEND UPLOAD
-    # ═══════════════════════════════════════════════════════════════
-
     with st.expander("Upload SMS Spend Data"):
         st.markdown("""
         Upload weekly SMS spend as CSV:
@@ -458,10 +491,6 @@ with main:
             sms_df.to_csv(sms_path, index=False)
             st.success(f"SMS spend data saved ({len(sms_df)} weeks)")
 
-
-    # ═══════════════════════════════════════════════════════════════
-    # GENERATE TEMPLATE
-    # ═══════════════════════════════════════════════════════════════
 
     with st.expander("Generate blank event template"):
         col1, col2 = st.columns(2)
@@ -479,10 +508,6 @@ with main:
             st.success(f"Template generated with {len(events_df)} weeks")
             st.rerun()
 
-
-    # ═══════════════════════════════════════════════════════════════
-    # SUMMARY STATS
-    # ═══════════════════════════════════════════════════════════════
 
     st.markdown("---")
     all_events = events_df if not events_df.empty else pd.DataFrame()
@@ -502,55 +527,7 @@ with main:
             drop_count = int((all_events["product_drop"] > 0).sum()) if "product_drop" in all_events.columns else 0
             st.metric("Product drops", drop_count)
 
-
-# ── Context Panel (right column) ────────────────────────────
-
-with ctx:
-    context_block(
-        "Why Events Matter",
-        "The MMM and Spend-aMER models use events to understand "
-        "**why** certain weeks had higher efficiency. Without forward events, "
-        "the model assumes no campaign boost — significantly underestimating "
-        "spend capacity during discount months."
-    )
-
-    context_separator()
-
-    context_block(
-        "Discount Levels",
-        "**0** = no discount that week\n"
-        "**1** = light discount (10-20% off, limited scope)\n"
-        "**2** = heavy discount (Black Week, Birthday Week, sitewide)\n\n"
-        "Heavy discounts typically boost channel efficiency by 30-50% — "
-        "meaning you can spend more while maintaining aMER."
-    )
-
-    context_separator()
-
-    context_block(
-        "Product Drops",
-        "New product launches create organic demand spikes and "
-        "improve ad conversion rates. Mark weeks with significant "
-        "new product releases.\n\n"
-        "The model learns how product drops affect revenue and "
-        "accounts for this in future planning."
-    )
-
-    context_separator()
-
-    context_block(
-        "Forward Planning",
-        "Add your planned campaigns, product launches, and "
-        "key dates for the next 12 months. The more complete "
-        "this calendar is, the better the Spend-aMER recommendations."
-    )
-
-    context_tip(
-        "**Common mistake:** Leaving future months empty. "
-        "Even if you don't have exact dates, mark approximate "
-        "weeks for known campaigns (Black Week, summer sale, etc.)."
-    )
-
+with _c2:
     context_block(
         "Historical Events",
         "Past events are read-only here — they were used when "
