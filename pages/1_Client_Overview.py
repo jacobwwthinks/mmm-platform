@@ -168,9 +168,17 @@ if run_clicked:
                 model = create_model(config.get("model", {}))
                 results = model.fit(model_df, target_col=target)
 
-                # Save results (including model_df for seasonal indices)
+                # Save results
                 results_dir.mkdir(parents=True, exist_ok=True)
-                results.save(str(results_dir), model_df=model_df)
+                try:
+                    results.save(str(results_dir), model_df=model_df)
+                except TypeError:
+                    # Fallback if save() doesn't accept model_df yet (stale cache)
+                    results.save(str(results_dir))
+                    # Persist model_df separately
+                    import pickle as _pkl
+                    with open(f"{results_dir}/model_df.pkl", "wb") as _f:
+                        _pkl.dump(model_df, _f)
                 st.session_state["mmm_results"] = results
                 st.session_state["revenue_only"] = False
 
