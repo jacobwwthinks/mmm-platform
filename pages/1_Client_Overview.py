@@ -23,11 +23,12 @@ from data.process import merge_channel_data, prepare_model_input, get_spend_colu
 from data.events import load_events, generate_event_template
 from model.mmm import create_model, MMMResults
 from model.diagnostics import assess_model_quality
-from ui.layout import inject_context_css, context_block, context_tip, context_separator
+from ui.layout import inject_context_css, render_sidebar, context_block, context_tip, context_separator
 
 logging.basicConfig(level=logging.INFO)
 
 inject_context_css()
+render_sidebar()
 
 st.title("Client Overview")
 

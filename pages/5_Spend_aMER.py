@@ -46,7 +46,7 @@ from optimize.spend_amer import (
     compute_observed_yoy_trend,
     optimize_channel_allocation,
 )
-from ui.layout import inject_context_css, context_block, context_tip, context_separator
+from ui.layout import inject_context_css, render_sidebar, context_block, context_tip, context_separator
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -61,6 +61,7 @@ GREEN = "#59A14F"
 COLORS = [ORANGE, TEAL, RED, GREEN, "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"]
 
 inject_context_css()
+render_sidebar()
 
 st.title("Spend-aMER Model")
 

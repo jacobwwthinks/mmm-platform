@@ -28,6 +28,66 @@ Usage in a page:
 import streamlit as st
 
 
+def render_sidebar():
+    """Render the shared sidebar navigation on every page.
+
+    This ensures the sidebar looks identical whether you're on the
+    home page or any sub-page.  Must be called after session state
+    has been initialised (selected_client, client_config, config).
+    """
+    from pathlib import Path
+
+    st.sidebar.page_link("app.py", label="Home")
+    st.sidebar.page_link("pages/1_Client_Overview.py", label="Client Overview")
+    st.sidebar.page_link("pages/2_Channel_Analysis.py", label="Channel Analysis")
+    st.sidebar.page_link("pages/3_Budget_Optimizer.py", label="Budget Optimizer")
+    st.sidebar.page_link("pages/4_Event_Calendar.py", label="Event Calendar")
+    st.sidebar.page_link("pages/5_Spend_aMER.py", label="Spend-aMER")
+
+    st.sidebar.markdown("---")
+
+    # Client selector (only if config is available)
+    config = st.session_state.get("config")
+    if config:
+        clients = config.get("clients", {})
+        client_options = {v.get("display_name", k): k for k, v in clients.items()}
+
+        selected_display = st.sidebar.selectbox(
+            "Select Client",
+            options=list(client_options.keys()),
+            index=0,
+            key="sidebar_client_select",
+        )
+        selected_client = client_options[selected_display]
+
+        st.session_state["selected_client"] = selected_client
+        st.session_state["client_config"] = clients[selected_client]
+
+        st.sidebar.markdown("---")
+
+        # Connected channels
+        client_cfg = clients[selected_client]
+        channels = client_cfg.get("channels", {})
+        st.sidebar.markdown("**Connected Channels:**")
+        for ch_name, ch_cfg in channels.items():
+            if ch_cfg and ch_cfg.get("windsor_account"):
+                st.sidebar.markdown(f"  + {ch_name.replace('_', ' ').title()}")
+            else:
+                st.sidebar.markdown(f"  - {ch_name.replace('_', ' ').title()}")
+
+        email_cfg = client_cfg.get("email_source", {})
+        if email_cfg.get("windsor_account"):
+            st.sidebar.markdown("  + Email (Klaviyo)")
+        else:
+            st.sidebar.markdown("  - Email (Klaviyo)")
+
+        rev_source = client_cfg.get("revenue_source", {})
+        if rev_source.get("windsor_account"):
+            st.sidebar.markdown("  + Shopify (Revenue)")
+        else:
+            st.sidebar.markdown("  - Shopify (Revenue)")
+
+
 def inject_context_css():
     """Inject CSS for the right-column context panel styling."""
     st.markdown("""

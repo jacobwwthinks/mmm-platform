@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.events import load_events, generate_event_template
 from data.github_persist import save_file_to_github
-from ui.layout import inject_context_css, context_block, context_tip, context_separator
+from ui.layout import inject_context_css, render_sidebar, context_block, context_tip, context_separator
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -45,6 +45,7 @@ def _save_events_csv(df: pd.DataFrame, local_path: str, repo_path: str, action: 
 
 
 inject_context_css()
+render_sidebar()
 
 st.title("Event Calendar")
 

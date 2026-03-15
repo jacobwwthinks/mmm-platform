@@ -8,6 +8,10 @@ Run with: streamlit run app.py
 import streamlit as st
 import yaml
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent))
+from ui.layout import render_sidebar
 
 st.set_page_config(
     page_title="MMM Platform",
@@ -144,67 +148,17 @@ config = load_config()
 
 # ── Sidebar: Navigation + Client Selection ──────────────────
 
-st.sidebar.title("MMM Platform")
-st.sidebar.markdown("---")
-
-# Custom navigation (replaces auto-generated sidebar nav)
-st.sidebar.page_link("app.py", label="Home")
-st.sidebar.page_link("pages/1_Client_Overview.py", label="Client Overview")
-st.sidebar.page_link("pages/2_Channel_Analysis.py", label="Channel Analysis")
-st.sidebar.page_link("pages/3_Budget_Optimizer.py", label="Budget Optimizer")
-st.sidebar.page_link("pages/4_Event_Calendar.py", label="Event Calendar")
-st.sidebar.page_link("pages/5_Spend_aMER.py", label="Spend-aMER")
-
-st.sidebar.markdown("---")
-
-clients = config.get("clients", {})
-client_options = {v.get("display_name", k): k for k, v in clients.items()}
-
-selected_display = st.sidebar.selectbox(
-    "Select Client",
-    options=list(client_options.keys()),
-    index=0,
-)
-selected_client = client_options[selected_display]
-
-# Store in session state for pages to access
-st.session_state["selected_client"] = selected_client
-st.session_state["client_config"] = clients[selected_client]
 st.session_state["config"] = config
+render_sidebar()
 
 st.sidebar.markdown("---")
-
-# Show connected channels
-client_cfg = clients[selected_client]
-channels = client_cfg.get("channels", {})
-st.sidebar.markdown("**Connected Channels:**")
-for ch_name, ch_cfg in channels.items():
-    if ch_cfg and ch_cfg.get("windsor_account"):
-        st.sidebar.markdown(f"  + {ch_name.replace('_', ' ').title()}")
-    else:
-        st.sidebar.markdown(f"  - {ch_name.replace('_', ' ').title()}")
-
-# Show email source
-email_cfg = client_cfg.get("email_source", {})
-if email_cfg.get("windsor_account"):
-    st.sidebar.markdown(f"  + Email (Klaviyo)")
-else:
-    st.sidebar.markdown(f"  - Email (Klaviyo)")
-
-rev_source = client_cfg.get("revenue_source", {})
-if rev_source.get("windsor_account"):
-    st.sidebar.markdown(f"  + Shopify (Revenue)")
-else:
-    st.sidebar.markdown(f"  - Shopify (Revenue)")
-
-st.sidebar.markdown("---")
-
-# Logout button
 if st.sidebar.button("Log out"):
     st.session_state["authenticated"] = False
     st.rerun()
-
 st.sidebar.caption("Built for DTC e-commerce brands")
+
+selected_client = st.session_state.get("selected_client", "juniper")
+selected_display = st.session_state.get("client_config", {}).get("display_name", selected_client)
 
 # ── Main Page ────────────────────────────────────────────────
 

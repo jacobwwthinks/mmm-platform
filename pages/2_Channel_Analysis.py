@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from model.mmm import MMMResults, geometric_adstock, hill_saturation
-from ui.layout import inject_context_css, context_block, context_tip, context_separator
+from ui.layout import inject_context_css, render_sidebar, context_block, context_tip, context_separator
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -33,6 +33,7 @@ PLOTLY_LAYOUT = dict(
 ORANGE = "#F58518"
 
 inject_context_css()
+render_sidebar()
 
 st.title("Channel Analysis")
 

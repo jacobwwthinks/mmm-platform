@@ -26,7 +26,7 @@ from optimize.spend_amer import (
     compute_event_boosts,
     compute_monthly_organic,
 )
-from ui.layout import inject_context_css, context_block, context_tip, context_separator
+from ui.layout import inject_context_css, render_sidebar, context_block, context_tip, context_separator
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -36,6 +36,7 @@ PLOTLY_LAYOUT = dict(
 )
 
 inject_context_css()
+render_sidebar()
 
 st.title("Budget Optimizer")
 
