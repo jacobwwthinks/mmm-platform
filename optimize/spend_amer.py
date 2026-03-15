@@ -611,6 +611,104 @@ def compute_historical_backcheck(
         return None
 
 
+def compute_same_month_benchmark(
+    model_df: Optional[pd.DataFrame],
+    target_month: int,
+    target_year: int,
+    yoy_growth_pct: float = 20.0,
+) -> Optional[dict]:
+    """
+    Pull historical spend and aMER for the same calendar month from prior years.
+
+    This is the simplest and most trustworthy sanity check:
+    "Last May we spent 500K at 2.0x aMER. This May we can probably do 600K."
+
+    Args:
+        model_df: Historical weekly data with spend and revenue columns
+        target_month: Calendar month number (1-12) we're planning for
+        target_year: Year we're planning for
+        yoy_growth_pct: Expected year-over-year growth in spend capacity
+
+    Returns:
+        Dict with prior year benchmarks and growth-adjusted suggestion,
+        or None if insufficient data.
+    """
+    if model_df is None:
+        return None
+
+    try:
+        mdf = model_df.copy()
+        mdf["week_start"] = pd.to_datetime(mdf["week_start"])
+        mdf["month"] = mdf["week_start"].dt.month
+        mdf["year"] = mdf["week_start"].dt.year
+
+        spend_cols = [c for c in mdf.columns if c.endswith("_spend")]
+        mdf["total_spend"] = mdf[spend_cols].sum(axis=1)
+
+        rev_col = "new_revenue" if "new_revenue" in mdf.columns else "revenue"
+
+        # Per-channel spend for breakdown
+        channel_spends = {}
+        for col in spend_cols:
+            ch_name = col.replace("_spend", "").replace("_", " ").title()
+            channel_spends[ch_name] = col
+
+        # Find same calendar month in prior years
+        benchmarks = []
+        for year in sorted(mdf["year"].unique()):
+            if year >= target_year:
+                continue
+            month_data = mdf[(mdf["month"] == target_month) & (mdf["year"] == year)]
+            if len(month_data) < 3:  # need at least 3 weeks
+                continue
+
+            total_spend = month_data["total_spend"].sum()
+            total_rev = month_data[rev_col].sum()
+            n_weeks = len(month_data)
+            amer = total_rev / (total_spend + 1e-8)
+
+            # Per-channel breakdown
+            ch_breakdown = {}
+            for ch_name, col in channel_spends.items():
+                ch_breakdown[ch_name] = month_data[col].sum()
+
+            benchmarks.append({
+                "year": year,
+                "month": target_month,
+                "label": datetime.date(year, target_month, 1).strftime("%b %Y"),
+                "total_spend": total_spend,
+                "monthly_spend": total_spend,  # already monthly (sum of weeks)
+                "total_revenue": total_rev,
+                "amer": amer,
+                "n_weeks": n_weeks,
+                "channel_breakdown": ch_breakdown,
+            })
+
+        if not benchmarks:
+            return None
+
+        # Use most recent prior year as primary benchmark
+        latest = benchmarks[-1]
+        years_gap = target_year - latest["year"]
+        growth_mult = (1 + yoy_growth_pct / 100) ** years_gap
+
+        # Growth-adjusted suggestion: same aMER, more spend
+        suggested_spend = latest["total_spend"] * growth_mult
+
+        return {
+            "benchmarks": benchmarks,
+            "latest_benchmark": latest,
+            "years_gap": years_gap,
+            "growth_multiplier": growth_mult,
+            "suggested_spend_same_amer": suggested_spend,
+            "yoy_growth_pct": yoy_growth_pct,
+        }
+
+    except Exception as e:
+        logger.warning(f"Could not compute same-month benchmark: {e}")
+        return None
+
+
 # ═══════════════════════════════════════════════════════════════
 # MONTHLY SPEND PLAN
 # ═══════════════════════════════════════════════════════════════

@@ -40,6 +40,7 @@ from optimize.spend_amer import (
     compute_monthly_organic,
     compute_historical_backcheck,
     compute_calibration_factor,
+    compute_same_month_benchmark,
     optimize_channel_allocation,
 )
 
@@ -209,7 +210,7 @@ if _months_missing_events:
 
 st.subheader("Unit Economics")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     gm2_pct = st.number_input(
@@ -232,6 +233,17 @@ with col2:
         help="How much additional revenue a new customer generates over 12 months "
              "beyond their first order. E.g., 30% means a customer with a 1000 SEK "
              "first order spends an additional 300 SEK over the next year.",
+    )
+
+with col3:
+    yoy_growth = st.number_input(
+        "YoY spend capacity growth %",
+        min_value=0.0,
+        max_value=100.0,
+        value=20.0,
+        step=5.0,
+        help="How much more you expect to be able to spend at the same aMER vs last year. "
+             "E.g., 20% means if you spent 500K last May, you can do ~600K this May at the same efficiency.",
     )
 
 cltv_mult = 1 + cltv_expansion / 100
@@ -511,6 +523,77 @@ if optimal.get("at_upper_bound", False):
         "extrapolating beyond observed data — treat the exact number with caution and "
         "scale up gradually rather than jumping to this level."
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# HISTORICAL SAME-MONTH BENCHMARK (SANITY CHECK)
+# ═══════════════════════════════════════════════════════════════
+
+benchmark = compute_same_month_benchmark(model_df, sel_month, sel_year, yoy_growth_pct=yoy_growth)
+
+if benchmark is not None:
+    st.markdown("---")
+    st.markdown(f"#### Historical Benchmark — {sel_label}")
+
+    latest_bm = benchmark["latest_benchmark"]
+
+    st.markdown(
+        f"In **{latest_bm['label']}** you spent **{latest_bm['total_spend']:,.0f} SEK** "
+        f"at **{latest_bm['amer']:.2f}x aMER**. "
+        f"With ~{benchmark['yoy_growth_pct']:.0f}% YoY growth, a reasonable target "
+        f"for {sel_label} at similar efficiency is "
+        f"**{benchmark['suggested_spend_same_amer']:,.0f} SEK**."
+    )
+
+    bm_col1, bm_col2, bm_col3, bm_col4 = st.columns(4)
+    with bm_col1:
+        st.metric(
+            f"{latest_bm['label']} spend",
+            f"{latest_bm['total_spend']:,.0f}",
+        )
+    with bm_col2:
+        st.metric(
+            f"{latest_bm['label']} aMER",
+            f"{latest_bm['amer']:.2f}x",
+        )
+    with bm_col3:
+        st.metric(
+            f"Growth-adjusted target",
+            f"{benchmark['suggested_spend_same_amer']:,.0f}",
+            f"+{benchmark['yoy_growth_pct'] * benchmark['years_gap']:.0f}% YoY",
+        )
+    with bm_col4:
+        model_vs_benchmark = (
+            (optimal["optimal_monthly_spend"] - benchmark["suggested_spend_same_amer"])
+            / (benchmark["suggested_spend_same_amer"] + 1e-8) * 100
+        )
+        st.metric(
+            "Model vs benchmark",
+            f"{model_vs_benchmark:+.0f}%",
+            help="How the model's recommendation compares to the growth-adjusted historical benchmark.",
+        )
+
+    # Per-channel breakdown from last year
+    ch_breakdown = latest_bm.get("channel_breakdown", {})
+    if ch_breakdown:
+        with st.expander(f"Channel breakdown — {latest_bm['label']}"):
+            bm_rows = [
+                {"Channel": ch, "Spend": f"{v:,.0f}",
+                 "Share": f"{v / (latest_bm['total_spend'] + 1e-8) * 100:.1f}%"}
+                for ch, v in ch_breakdown.items() if v > 0
+            ]
+            if bm_rows:
+                st.dataframe(pd.DataFrame(bm_rows), hide_index=True, use_container_width=True)
+
+    # Flag large divergence
+    if abs(model_vs_benchmark) > 50:
+        st.warning(
+            f"**Large gap between model and historical benchmark.** "
+            f"The model recommends {optimal['optimal_monthly_spend']:,.0f} SEK vs "
+            f"the benchmark of {benchmark['suggested_spend_same_amer']:,.0f} SEK "
+            f"({model_vs_benchmark:+.0f}%). Consider using the historical benchmark as "
+            f"a more conservative guide and scaling gradually."
+        )
 
 
 # ═══════════════════════════════════════════════════════════════
