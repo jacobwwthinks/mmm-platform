@@ -17,6 +17,7 @@ import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.events import load_events, generate_event_template
+from data.github_persist import save_file_to_github
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -28,6 +29,17 @@ ORANGE = "#F58518"
 TEAL = "#76B7B2"
 RED = "#E15759"
 GREEN = "#59A14F"
+
+def _save_events_csv(df: pd.DataFrame, local_path: str, repo_path: str, action: str = "Update"):
+    """Save events CSV locally and persist to GitHub."""
+    df.to_csv(local_path, index=False)
+    csv_content = df.to_csv(index=False)
+    gh_result = save_file_to_github(
+        repo_path, csv_content,
+        commit_message=f"{action} event calendar via Streamlit",
+    )
+    return gh_result
+
 
 st.title("Event Calendar")
 
@@ -89,8 +101,11 @@ with col_ul:
         if missing:
             st.error(f"Missing required columns: {', '.join(missing)}")
         else:
-            new_events.to_csv(events_path, index=False)
-            st.success("Calendar uploaded and saved!")
+            gh = _save_events_csv(new_events, events_path, events_path, "Upload replacement")
+            if gh["success"]:
+                st.success(f"Calendar uploaded and saved — {gh['message']}")
+            else:
+                st.warning(f"Calendar uploaded locally. {gh['message']}")
             events_df = load_events(events_path)
             st.rerun()
 
@@ -292,7 +307,9 @@ if _available_mondays:
             combined = pd.concat([hist_df[edit_cols_save], fwd_df[edit_cols_save], new_row],
                                   ignore_index=True)
             combined = combined.sort_values("week_start").reset_index(drop=True)
-            combined.to_csv(events_path, index=False)
+            gh = _save_events_csv(combined, events_path, events_path, "Add event week to")
+            if not gh["success"]:
+                st.warning(gh["message"])
             st.rerun()
 
 # Monday dropdown options for the selectbox column in the editor
@@ -338,8 +355,16 @@ if st.button("Save forward events", type="primary", key="save_fwd_btn"):
 
     combined = pd.concat([hist_df[edit_cols], edited_fwd[edit_cols]], ignore_index=True)
     combined = combined.sort_values("week_start").reset_index(drop=True)
-    combined.to_csv(events_path, index=False)
-    st.success(f"Saved {len(combined)} event weeks ({len(hist_df)} historical + {len(edited_fwd)} forward)")
+    gh = _save_events_csv(combined, events_path, events_path, "Update forward events in")
+    n_fwd = len(edited_fwd)
+    n_hist = len(hist_df)
+    if gh["success"]:
+        st.success(f"Saved {len(combined)} event weeks ({n_hist} historical + {n_fwd} forward) — {gh['message']}")
+    else:
+        st.warning(
+            f"Saved locally ({n_hist} historical + {n_fwd} forward) but **not persisted to repository**. "
+            f"{gh['message']}"
+        )
     st.rerun()
 
 
