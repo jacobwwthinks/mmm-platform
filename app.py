@@ -36,19 +36,30 @@ h1, h2, h3, h4, h5, h6, p, span, div, label, input, textarea, select, button {
     display: none;
 }
 
-/* Lighter heading weight — less clunky bold */
+/* Lighter heading weight + smaller sizes */
 h1, [data-testid="stTitle"], [data-testid="stTitle"] span,
 [data-testid="stHeading"] h1, [data-testid="stHeading"] h1 span {
     font-weight: 300 !important;
+    font-size: 1.6rem !important;
     text-transform: uppercase !important;
     letter-spacing: 0.05em !important;
 }
 h2, h3, [data-testid="stHeading"] h2, [data-testid="stHeading"] h2 span,
 [data-testid="stHeading"] h3, [data-testid="stHeading"] h3 span {
     font-weight: 400 !important;
+    font-size: 1.25rem !important;
 }
 h4, h5, h6 {
     font-weight: 400 !important;
+    font-size: 1.05rem !important;
+}
+
+/* Smaller metric values and labels */
+[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-size: 1.4rem !important;
+}
+[data-testid="stMetric"] [data-testid="stMetricLabel"] {
+    font-size: 0.85rem !important;
 }
 
 /* Full-width layout — reduce default padding */
