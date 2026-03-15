@@ -77,8 +77,13 @@ def predict_channel_revenue(
     exponent = np.clip(lam * np.power(x_norm, alpha), 0, 30)
     saturated = 1 - np.exp(-exponent)
 
+    # Use most recent effectiveness (beta_end_raw) if available,
+    # otherwise fall back to base beta_raw. beta_end_raw accounts for
+    # time-varying channel effectiveness (e.g., creative quality improvements).
+    beta = params.get("beta_end_raw", params["beta_raw"])
+
     # Average of last 4 weeks (after adstock has reached steady state)
-    return params["beta_raw"] * saturated[-4:].mean()
+    return beta * saturated[-4:].mean()
 
 
 # ═══════════════════════════════════════════════════════════════

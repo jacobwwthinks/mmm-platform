@@ -322,9 +322,11 @@ class LightweightMMM:
         channel_priors = [get_channel_prior(col_to_prior_name(c)) for c in spend_cols]
 
         # Channel params per channel:
-        #   [decay, alpha, lam, beta_base, beta_event]  = 5 params if interactions
-        #   [decay, alpha, lam, beta_base]               = 4 params if no interactions
-        params_per_channel = 5 if has_event_interactions else 4
+        #   [decay, alpha, lam, beta_base, beta_trend, beta_event]  = 6 if interactions
+        #   [decay, alpha, lam, beta_base, beta_trend]              = 5 if no interactions
+        # beta_trend allows each channel's effectiveness to change over time
+        # (e.g., creative quality improvements making Meta more efficient)
+        params_per_channel = 6 if has_event_interactions else 5
 
         def model_predict_norm(params):
             """Predict revenue in normalized (z-score) space."""
@@ -341,19 +343,20 @@ class LightweightMMM:
                 pred += params[idx] * season_matrix[:, j]
                 idx += 1
 
-            # Channel effects with event interactions
-            # contribution_i = (beta_base + beta_event * heavy_discount) * saturated
+            # Channel effects with trend and event interactions
+            # effective_beta = beta_base + beta_trend * time + beta_event * heavy_discount
             for i in range(n_channels):
                 decay = _safe_sigmoid(params[idx])
                 alpha = _safe_exp(params[idx + 1])
                 lam = _safe_exp(params[idx + 2])
                 beta_base = _safe_exp(params[idx + 3])
+                beta_trend = params[idx + 4]  # unconstrained: can be + or -
+
+                effective_beta = beta_base + beta_trend * time_index
 
                 if has_event_interactions:
-                    beta_event = _safe_exp(params[idx + 4])
-                    effective_beta = beta_base + beta_event * heavy_discount
-                else:
-                    effective_beta = beta_base
+                    beta_event = _safe_exp(params[idx + 5])
+                    effective_beta = effective_beta + beta_event * heavy_discount
 
                 idx += params_per_channel
 
@@ -396,11 +399,15 @@ class LightweightMMM:
                 beta_base = _safe_exp(params[idx + 3])
                 reg += 0.5 * ((beta_base - prior.beta_mean) / prior.beta_sd) ** 2
 
+                # beta_trend: light L2 centered at 0 (no trend by default)
+                beta_trend = params[idx + 4]
+                reg += 0.5 * (beta_trend / 0.5) ** 2
+
                 if has_event_interactions:
                     # Very light regularization on event boost — we expect it to
                     # potentially be much larger than base beta (3-5x during
                     # Black Week). Use 5x prior SD to let the data speak.
-                    beta_event = _safe_exp(params[idx + 4])
+                    beta_event = _safe_exp(params[idx + 5])
                     reg += 0.5 * ((beta_event - prior.beta_mean) / (prior.beta_sd * 5)) ** 2
 
                 idx += params_per_channel
@@ -421,8 +428,9 @@ class LightweightMMM:
             x0[idx + 1] = np.log(prior.saturation_alpha_mean)
             x0[idx + 2] = np.log(prior.saturation_lam_mean)
             x0[idx + 3] = np.log(prior.beta_mean)
+            x0[idx + 4] = 0.0  # beta_trend: no trend initially
             if has_event_interactions:
-                x0[idx + 4] = np.log(prior.beta_mean)  # init event boost = base beta
+                x0[idx + 5] = np.log(prior.beta_mean)  # init event boost = base beta
             idx += params_per_channel
 
         # Multi-start optimization for robustness
@@ -483,11 +491,11 @@ class LightweightMMM:
                     alpha = _safe_exp(params[idx + 1])
                     lam = _safe_exp(params[idx + 2])
                     beta_base = _safe_exp(params[idx + 3])
+                    beta_trend = params[idx + 4]
+                    effective_beta = beta_base + beta_trend * _time
                     if has_event_interactions:
-                        beta_event = _safe_exp(params[idx + 4])
-                        effective_beta = beta_base + beta_event * _heavy
-                    else:
-                        effective_beta = beta_base
+                        beta_event = _safe_exp(params[idx + 5])
+                        effective_beta = effective_beta + beta_event * _heavy
                     idx += params_per_channel
                     adstocked = geometric_adstock(_spend[:, i], decay, channel_priors[i].adstock_max_lag)
                     saturated = hill_saturation(adstocked, alpha, lam)
@@ -536,17 +544,24 @@ class LightweightMMM:
             lam = _safe_exp(best_params[idx + 2])
             beta_base = _safe_exp(best_params[idx + 3])
 
+            beta_trend = best_params[idx + 4]
+            effective_beta = beta_base + beta_trend * time_index
+
             if has_event_interactions:
-                beta_event = _safe_exp(best_params[idx + 4])
-                effective_beta = beta_base + beta_event * heavy_discount
+                beta_event = _safe_exp(best_params[idx + 5])
+                effective_beta = effective_beta + beta_event * heavy_discount
             else:
                 beta_event = 0.0
-                effective_beta = beta_base
 
             adstocked = geometric_adstock(spend_matrix[:, i], decay, channel_priors[i].adstock_max_lag)
             saturated = hill_saturation(adstocked, alpha, lam)
-            # Contribution in raw scale — effective_beta is (T,) during events
+            # Contribution in raw scale — effective_beta is (T,) vector
             contribution_raw = effective_beta * saturated * y_std
+
+            # Beta at end of training period (most recent effectiveness)
+            beta_end = beta_base + beta_trend * 1.0  # time_index goes 0→1
+            # Trend as % change over training period
+            trend_pct = beta_trend / (beta_base + 1e-8) * 100
 
             contributions[channel_name] = contribution_raw
             channel_params_dict[channel_name] = {
@@ -554,10 +569,14 @@ class LightweightMMM:
                 "saturation_alpha": float(alpha),
                 "saturation_lam": float(lam),
                 "beta": float(beta_base),
-                "beta_raw": float(beta_base * y_std),  # base revenue per unit saturation
+                "beta_raw": float(beta_base * y_std),
+                "beta_trend": float(beta_trend),
+                "beta_trend_pct": float(trend_pct),  # % change over training window
+                "beta_end": float(beta_end),
+                "beta_end_raw": float(beta_end * y_std),  # current effectiveness
                 "beta_event": float(beta_event),
-                "beta_event_raw": float(beta_event * y_std),  # additional revenue during events
-                "event_multiplier": float(1 + beta_event / (beta_base + 1e-8)),  # how much more effective during events
+                "beta_event_raw": float(beta_event * y_std),
+                "event_multiplier": float(1 + beta_event / (beta_end + 1e-8)),
                 "adstock_training_mean": float(adstocked.mean()),
             }
             idx += params_per_channel
@@ -583,11 +602,11 @@ class LightweightMMM:
                 b_alpha = _safe_exp(b_params[b_idx + 1])
                 b_lam = _safe_exp(b_params[b_idx + 2])
                 b_beta_base = _safe_exp(b_params[b_idx + 3])
+                b_beta_trend = b_params[b_idx + 4]
+                b_effective_beta = b_beta_base + b_beta_trend * time_index
                 if has_event_interactions:
-                    b_beta_event = _safe_exp(b_params[b_idx + 4])
-                    b_effective_beta = b_beta_base + b_beta_event * heavy_discount
-                else:
-                    b_effective_beta = b_beta_base
+                    b_beta_event = _safe_exp(b_params[b_idx + 5])
+                    b_effective_beta = b_effective_beta + b_beta_event * heavy_discount
                 b_adstocked = geometric_adstock(spend_matrix[:, i], b_decay, channel_priors[i].adstock_max_lag)
                 b_saturated = hill_saturation(b_adstocked, b_alpha, b_lam)
                 b_contribution = (b_effective_beta * b_saturated).sum() * y_std
