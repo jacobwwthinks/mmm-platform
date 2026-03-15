@@ -39,6 +39,7 @@ from optimize.spend_amer import (
     compute_event_boosts,
     compute_monthly_organic,
     compute_historical_backcheck,
+    compute_calibration_factor,
     optimize_channel_allocation,
 )
 
@@ -141,9 +142,34 @@ event_boosts = compute_event_boosts(results, model_df, events_df)
 monthly_organic = compute_monthly_organic(results, model_df)
 historical = compute_historical_backcheck(results, model_df)
 
+# ── Model calibration ──────────────────────────────────────
+# The saturation curves give the right SHAPE but may underestimate
+# the LEVEL of channel contribution. Calibrate against actual data.
+calibration = compute_calibration_factor(results, model_df)
+cal_factor = calibration["factor"]
+
 historical_max_monthly_spend = 0
 if historical is not None and len(historical) > 0:
     historical_max_monthly_spend = historical["total_spend"].max()
+
+# ── Model calibration diagnostic ──────────────────────────
+if calibration["status"] == "ok" and abs(cal_factor - 1.0) > 0.1:
+    cal_pred = calibration["predicted_weekly_channel_rev"]
+    cal_actual = calibration["actual_weekly_channel_contrib"]
+    if cal_factor > 1.05:
+        st.info(
+            f"**Model calibration applied ({cal_factor:.2f}x)**\n\n"
+            f"The model's saturation curves predict **{cal_pred:,.0f} SEK/wk** in channel revenue "
+            f"at historical spend, but the model's own decomposition shows **{cal_actual:,.0f} SEK/wk**. "
+            f"A {cal_factor:.2f}x calibration factor is applied to correct the level while preserving "
+            f"the saturation curve shape (diminishing returns)."
+        )
+    elif cal_factor < 0.95:
+        st.info(
+            f"**Model calibration applied ({cal_factor:.2f}x)**\n\n"
+            f"The optimizer over-predicts channel revenue vs the model's decomposition. "
+            f"A {cal_factor:.2f}x correction is applied."
+        )
 
 # ── Check for missing forward-looking events ──────────────
 # Months without any event data will silently use event_boost=1.0,
@@ -350,6 +376,7 @@ optimal = find_optimal_spend(
     results, gm2_pct, cltv_expansion,
     organic_weekly_revenue=organic_weekly,
     seasonal_multiplier=effective_mult,
+    calibration_factor=cal_factor,
 )
 
 # Generate GP3 curve — start from 20% of current to avoid misleading S-curve region
@@ -357,6 +384,7 @@ gp3_df = compute_gp3_curve(
     results, gm2_pct, cltv_expansion,
     organic_weekly_revenue=organic_weekly,
     seasonal_multiplier=effective_mult,
+    calibration_factor=cal_factor,
     n_points=200,
     max_spend_mult=3.0,
 )
@@ -470,7 +498,11 @@ with col3:
     st.metric("GP3 (365D)", f"{optimal['optimal_gp3_365d_monthly']:,.0f}")
 
 with col4:
-    st.metric("aMER", f"{optimal['amer_at_optimal']:.2f}x")
+    amer_display = optimal["amer_at_optimal"]
+    if amer_display > 100 or optimal["optimal_monthly_spend"] < 100:
+        st.metric("aMER", "N/A")
+    else:
+        st.metric("aMER", f"{amer_display:.2f}x")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -484,6 +516,7 @@ alloc_df = optimize_channel_allocation(
     results,
     total_weekly_spend=optimal["optimal_weekly_spend"],
     seasonal_multiplier=effective_mult,
+    calibration_factor=cal_factor,
 )
 
 col_chart, col_table = st.columns([1, 1])
@@ -618,6 +651,7 @@ for mo in month_options:
             results, gm2_pct, cltv_expansion,
             organic_weekly_revenue=o_weekly,
             seasonal_multiplier=eff,
+            calibration_factor=cal_factor,
         )
         overview_rows.append({
             "month": mo["date"].strftime("%b %Y"),

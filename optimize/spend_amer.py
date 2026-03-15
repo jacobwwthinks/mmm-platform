@@ -90,6 +90,87 @@ def predict_channel_revenue(
 
 
 # ═══════════════════════════════════════════════════════════════
+# MODEL CALIBRATION
+# ═══════════════════════════════════════════════════════════════
+
+def compute_calibration_factor(
+    results: MMMResults,
+    model_df: Optional[pd.DataFrame] = None,
+) -> dict:
+    """
+    Compare model-predicted channel revenue at historical spend vs actual.
+
+    The MMM saturation curves give the right SHAPE (diminishing returns)
+    but may underestimate the overall LEVEL of channel effectiveness —
+    especially when the model attributes too much to organic/seasonality.
+
+    This function computes a calibration factor:
+        calibration = actual_channel_contribution / predicted_channel_contribution
+
+    If calibration > 1, the model underestimates channel value.
+    If calibration < 1, the model overestimates.
+
+    Returns dict with calibration factor and diagnostics.
+    """
+    params = results.channel_params
+    roas_df = results.channel_roas
+    channels = [ch for ch in params.keys() if ch != "email"]
+
+    if not channels:
+        return {"factor": 1.0, "predicted_amer": 0, "actual_amer": 0, "status": "no_channels"}
+
+    # ── Predicted channel revenue at historical spend ──
+    predicted_weekly_rev = 0
+    total_weekly_spend = 0
+    for ch in channels:
+        row = roas_df[roas_df["channel"] == ch].iloc[0]
+        avg_spend = row["total_spend"] / max(results.n_weeks, 1)
+        adstock_mean = _get_adstock_training_mean(params[ch], results.n_weeks, row)
+        rev = predict_channel_revenue(avg_spend, params[ch], adstock_mean)
+        predicted_weekly_rev += rev
+        total_weekly_spend += avg_spend
+
+    # ── Actual channel revenue from model's own decomposition ──
+    contrib_df = results.channel_contributions
+    channel_cols = [c for c in contrib_df.columns if c not in ["week_start", "email"]]
+    actual_weekly_contrib = contrib_df[channel_cols].sum(axis=1).mean()
+
+    # ── Actual aMER from training data ──
+    actual_amer = 0
+    if model_df is not None:
+        mdf = model_df.copy()
+        rev_col = "new_revenue" if "new_revenue" in mdf.columns else "revenue"
+        spend_cols = [c for c in mdf.columns if c.endswith("_spend")]
+        total_rev = mdf[rev_col].sum()
+        total_spend = mdf[spend_cols].sum().sum()
+        actual_amer = total_rev / (total_spend + 1e-8)
+
+    predicted_amer = (predicted_weekly_rev + results.baseline_contribution.mean()) / (total_weekly_spend + 1e-8)
+
+    # Calibration factor: how much to scale predicted channel revenue
+    if predicted_weekly_rev > 0:
+        factor = actual_weekly_contrib / predicted_weekly_rev
+    else:
+        factor = 1.0
+
+    # Clamp to reasonable range (0.5 - 5.0)
+    factor = max(0.5, min(5.0, factor))
+
+    logger.info(f"Calibration: predicted_weekly_rev={predicted_weekly_rev:.0f}, "
+                f"actual_weekly_contrib={actual_weekly_contrib:.0f}, factor={factor:.2f}")
+
+    return {
+        "factor": float(factor),
+        "predicted_weekly_channel_rev": float(predicted_weekly_rev),
+        "actual_weekly_channel_contrib": float(actual_weekly_contrib),
+        "predicted_amer": float(predicted_amer),
+        "actual_amer": float(actual_amer),
+        "total_weekly_spend": float(total_weekly_spend),
+        "status": "ok",
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
 # GP3 CURVE COMPUTATION
 # ═══════════════════════════════════════════════════════════════
 
@@ -99,11 +180,16 @@ def compute_gp3_curve(
     cltv_expansion_pct: float,
     organic_weekly_revenue: float = 0,
     seasonal_multiplier: float = 1.0,
+    calibration_factor: float = 1.0,
     n_points: int = 150,
     max_spend_mult: float = 3.0,
 ) -> pd.DataFrame:
     """
     Compute GP3 at various total spend levels.
+
+    The calibration_factor scales predicted channel revenue to match
+    actual historical performance. The saturation curves give the right
+    shape (diminishing returns), and the calibration corrects the level.
 
     Returns DataFrame with spend, revenue, GP3 (first order + 365D), and aMER.
     """
@@ -134,7 +220,8 @@ def compute_gp3_curve(
             ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
             channel_rev += ch_rev
 
-        channel_rev *= seasonal_multiplier
+        # Apply calibration (corrects model level) and seasonal adjustment
+        channel_rev *= calibration_factor * seasonal_multiplier
 
         total_new_rev = organic_weekly_revenue + channel_rev
         rev_365d = total_new_rev * cltv_mult
@@ -176,10 +263,14 @@ def find_optimal_spend(
     cltv_expansion_pct: float,
     organic_weekly_revenue: float = 0,
     seasonal_multiplier: float = 1.0,
+    calibration_factor: float = 1.0,
     max_spend_mult: float = 5.0,
 ) -> dict:
     """
     Find the weekly spend level that maximizes 365D GP3.
+
+    The calibration_factor scales predicted channel revenue to match
+    actual historical performance before applying seasonal adjustments.
 
     Returns dict with optimal spend, GP3 (both first-order and 365D),
     both breakeven aMER thresholds, channel allocation, and current comparison.
@@ -210,7 +301,7 @@ def find_optimal_spend(
             ch_spend = total_spend * alloc_ratios.get(ch, 1 / len(channels))
             ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
             channel_rev += ch_rev
-        channel_rev *= seasonal_multiplier
+        channel_rev *= calibration_factor * seasonal_multiplier
         total_new_rev = organic_weekly_revenue + channel_rev
         gp3_first_order = total_new_rev * gm2_frac - total_spend
         gp3_365d = total_new_rev * cltv_mult * gm2_frac - total_spend
@@ -235,7 +326,8 @@ def find_optimal_spend(
     channel_allocation = {}
     for ch in channels:
         ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
-        ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch]) * seasonal_multiplier
+        ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
+        ch_rev *= calibration_factor * seasonal_multiplier
         channel_allocation[ch] = {
             "weekly_spend": ch_spend,
             "monthly_spend": ch_spend * 4.33,
@@ -254,7 +346,7 @@ def find_optimal_spend(
         "optimal_gp3_365d_monthly": opt_gp3_365d * 4.33,
         "new_customer_revenue_weekly": opt_rev,
         "new_customer_revenue_monthly": opt_rev * 4.33,
-        "amer_at_optimal": opt_rev / (optimal_spend + 1e-8),
+        "amer_at_optimal": opt_rev / (optimal_spend + 1e-8) if optimal_spend > 1 else 0,
         "breakeven_amer_first_order": breakeven_amer_first_order,
         "breakeven_amer_365d": breakeven_amer_365d,
         "channel_allocation": channel_allocation,
@@ -595,6 +687,7 @@ def optimize_channel_allocation(
     results: MMMResults,
     total_weekly_spend: float,
     seasonal_multiplier: float = 1.0,
+    calibration_factor: float = 1.0,
     min_pct: float = 0.05,
     max_pct: float = 0.80,
 ) -> pd.DataFrame:
@@ -605,6 +698,10 @@ def optimize_channel_allocation(
     roas_df = results.channel_roas
     channels = [ch for ch in params.keys() if ch != "email"]
     n_ch = len(channels)
+
+    if total_weekly_spend <= 0 or n_ch == 0:
+        return pd.DataFrame(columns=["channel", "weekly_spend", "monthly_spend",
+                                      "pct", "weekly_revenue", "monthly_revenue"])
 
     adstock_means = {}
     current_spend = {}
@@ -619,7 +716,7 @@ def optimize_channel_allocation(
         total_rev = 0
         for i, ch in enumerate(channels):
             rev = predict_channel_revenue(allocation[i], params[ch], adstock_means[ch])
-            total_rev += rev * seasonal_multiplier
+            total_rev += rev * calibration_factor * seasonal_multiplier
         return -total_rev
 
     x0 = np.array([
@@ -639,7 +736,7 @@ def optimize_channel_allocation(
     for i, ch in enumerate(channels):
         ch_spend = result.x[i]
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev *= seasonal_multiplier
+        ch_rev *= calibration_factor * seasonal_multiplier
         rows.append({
             "channel": ch,
             "weekly_spend": round(ch_spend, 0),
