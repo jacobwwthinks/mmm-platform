@@ -360,6 +360,52 @@ if model_df is not None:
 else:
     st.caption("Run the model to see spend build-up by channel.")
 
+# ── Marketing Spend Waterfall ─────────────────────────────────
+
+st.subheader("Marketing Spend by Channel")
+
+spend_waterfall_data = []
+if model_df is not None:
+    spend_cols_wf = [c for c in model_df.columns if c.endswith("_spend") and model_df[c].sum() > 0]
+    for col in spend_cols_wf:
+        ch_name = col.replace("_spend", "").replace("_", " ").title()
+        spend_waterfall_data.append({"component": ch_name, "value": model_df[col].sum()})
+else:
+    # Fallback to ROAS table totals
+    for _, row in results.channel_roas.iterrows():
+        if row["channel"] == "email":
+            continue
+        ch_name = row["channel"].replace("_", " ").title()
+        spend_waterfall_data.append({"component": ch_name, "value": row["total_spend"]})
+
+if spend_waterfall_data:
+    sw_df = pd.DataFrame(spend_waterfall_data)
+    sw_df = pd.concat([sw_df, pd.DataFrame([{"component": "Total", "value": sw_df["value"].sum()}])], ignore_index=True)
+    sw_measures = ["relative"] * (len(sw_df) - 1) + ["total"]
+
+    CHANNEL_COLORS_WF = ["#F58518", "#76B7B2", "#E15759", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F"]
+    bar_colors = CHANNEL_COLORS_WF[:len(sw_df) - 1] + ["#59A14F"]
+
+    fig_spend_wf = go.Figure(go.Waterfall(
+        x=sw_df["component"],
+        y=sw_df["value"],
+        measure=sw_measures,
+        textposition="outside",
+        text=[f"{v:,.0f}" for v in sw_df["value"]],
+        connector={"line": {"color": "rgb(63, 63, 63)"}},
+        increasing={"marker": {"color": ORANGE}},
+        decreasing={"marker": {"color": "#E15759"}},
+        totals={"marker": {"color": "#59A14F"}},
+    ))
+    fig_spend_wf.update_layout(
+        title="Total Spend by Channel",
+        yaxis_title="Spend (SEK)",
+        showlegend=False,
+        height=400,
+        **PLOTLY_LAYOUT,
+    )
+    st.plotly_chart(fig_spend_wf, use_container_width=True)
+
 # ── Revenue Decomposition Waterfall ──────────────────────────
 
 st.subheader("Revenue Decomposition")
