@@ -153,8 +153,8 @@ def compute_calibration_factor(
     else:
         factor = 1.0
 
-    # Clamp to reasonable range (0.5 - 5.0)
-    factor = max(0.5, min(5.0, factor))
+    # Clamp to reasonable range (0.5 - 2.5)
+    factor = max(0.5, min(2.5, factor))
 
     logger.info(f"Calibration: predicted_weekly_rev={predicted_weekly_rev:.0f}, "
                 f"actual_weekly_contrib={actual_weekly_contrib:.0f}, factor={factor:.2f}")
@@ -168,6 +168,41 @@ def compute_calibration_factor(
         "total_weekly_spend": float(total_weekly_spend),
         "status": "ok",
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# DIMINISHING CALIBRATION
+# ═══════════════════════════════════════════════════════════════
+
+def _effective_calibration(
+    calibration_factor: float,
+    total_spend: float,
+    historical_avg_spend: float,
+) -> float:
+    """
+    Apply calibration with diminishing weight as spend moves beyond observed data.
+
+    At historical average spend, full calibration is applied (we have evidence).
+    Beyond 1.5x historical, calibration fades linearly toward 1.0.
+    Beyond 3x historical, no calibration correction at all.
+
+    This prevents the optimizer from extrapolating an aggressive calibration
+    factor into spend ranges where we have no data.
+    """
+    if historical_avg_spend <= 0 or calibration_factor == 1.0:
+        return calibration_factor
+
+    spend_ratio = total_spend / (historical_avg_spend + 1e-8)
+
+    # Full calibration up to 1.5x historical, then linear fade to 1.0 by 3x
+    if spend_ratio <= 1.5:
+        return calibration_factor
+    elif spend_ratio >= 3.0:
+        return 1.0
+    else:
+        # Linear interpolation: 1.5 → full, 3.0 → 1.0
+        fade = (spend_ratio - 1.5) / 1.5  # 0 at 1.5x, 1 at 3.0x
+        return calibration_factor + (1.0 - calibration_factor) * fade
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -220,8 +255,9 @@ def compute_gp3_curve(
             ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
             channel_rev += ch_rev
 
-        # Apply calibration (corrects model level) and seasonal adjustment
-        channel_rev *= calibration_factor * seasonal_multiplier
+        # Apply calibration with diminishing weight beyond historical spend
+        eff_cal = _effective_calibration(calibration_factor, total_spend, current_total)
+        channel_rev *= eff_cal * seasonal_multiplier
 
         total_new_rev = organic_weekly_revenue + channel_rev
         rev_365d = total_new_rev * cltv_mult
@@ -264,13 +300,13 @@ def find_optimal_spend(
     organic_weekly_revenue: float = 0,
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
-    max_spend_mult: float = 5.0,
+    max_spend_mult: float = 3.0,
 ) -> dict:
     """
     Find the weekly spend level that maximizes 365D GP3.
 
-    The calibration_factor scales predicted channel revenue to match
-    actual historical performance before applying seasonal adjustments.
+    The calibration_factor is applied with diminishing weight beyond
+    historical spend levels (see _effective_calibration).
 
     Returns dict with optimal spend, GP3 (both first-order and 365D),
     both breakeven aMER thresholds, channel allocation, and current comparison.
@@ -301,7 +337,9 @@ def find_optimal_spend(
             ch_spend = total_spend * alloc_ratios.get(ch, 1 / len(channels))
             ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
             channel_rev += ch_rev
-        channel_rev *= calibration_factor * seasonal_multiplier
+        # Diminishing calibration: full at historical spend, fading beyond
+        eff_cal = _effective_calibration(calibration_factor, total_spend, current_total)
+        channel_rev *= eff_cal * seasonal_multiplier
         total_new_rev = organic_weekly_revenue + channel_rev
         gp3_first_order = total_new_rev * gm2_frac - total_spend
         gp3_365d = total_new_rev * cltv_mult * gm2_frac - total_spend
@@ -320,14 +358,16 @@ def find_optimal_spend(
     )
 
     optimal_spend = result.x
+    at_upper_bound = optimal_spend >= current_total * max_spend_mult * 0.95
     opt_rev, opt_ch_rev, opt_gp3_fo, opt_gp3_365d = _compute_at_spend(optimal_spend)
 
     # Channel breakdown at optimal
+    eff_cal_optimal = _effective_calibration(calibration_factor, optimal_spend, current_total)
     channel_allocation = {}
     for ch in channels:
         ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev *= calibration_factor * seasonal_multiplier
+        ch_rev *= eff_cal_optimal * seasonal_multiplier
         channel_allocation[ch] = {
             "weekly_spend": ch_spend,
             "monthly_spend": ch_spend * 4.33,
@@ -358,6 +398,7 @@ def find_optimal_spend(
         "current_gp3_365d_monthly": cur_gp3_365d * 4.33,
         "current_amer": cur_rev / (current_total + 1e-8),
         "spend_change_pct": (optimal_spend - current_total) / (current_total + 1e-8) * 100,
+        "at_upper_bound": at_upper_bound,
     }
 
 
@@ -711,12 +752,13 @@ def optimize_channel_allocation(
         current_spend[ch] = row["total_spend"] / results.n_weeks
 
     current_total = sum(current_spend.values())
+    eff_cal = _effective_calibration(calibration_factor, total_weekly_spend, current_total)
 
     def neg_revenue(allocation):
         total_rev = 0
         for i, ch in enumerate(channels):
             rev = predict_channel_revenue(allocation[i], params[ch], adstock_means[ch])
-            total_rev += rev * calibration_factor * seasonal_multiplier
+            total_rev += rev * eff_cal * seasonal_multiplier
         return -total_rev
 
     x0 = np.array([
@@ -736,7 +778,7 @@ def optimize_channel_allocation(
     for i, ch in enumerate(channels):
         ch_spend = result.x[i]
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev *= calibration_factor * seasonal_multiplier
+        ch_rev *= eff_cal * seasonal_multiplier
         rows.append({
             "channel": ch,
             "weekly_spend": round(ch_spend, 0),

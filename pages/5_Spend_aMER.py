@@ -504,6 +504,14 @@ with col4:
     else:
         st.metric("aMER", f"{amer_display:.2f}x")
 
+if optimal.get("at_upper_bound", False):
+    st.warning(
+        "**Recommendation hit the search boundary.** The model suggests GP3 is still "
+        "positive at the maximum spend level explored. This likely means the model is "
+        "extrapolating beyond observed data — treat the exact number with caution and "
+        "scale up gradually rather than jumping to this level."
+    )
+
 
 # ═══════════════════════════════════════════════════════════════
 # CHANNEL ALLOCATION FOR SELECTED MONTH
