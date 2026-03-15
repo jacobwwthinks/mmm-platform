@@ -177,12 +177,14 @@ for m in range(12):
 
 
 # ═══════════════════════════════════════════════════════════════
-# MAIN LAYOUT: data | context
+# MAIN LAYOUT: per-section data | context pairs
 # ═══════════════════════════════════════════════════════════════
 
-main, ctx = st.columns([4, 1])
+# ── Section 1: Calibration diagnostics + Unit Economics ────────
 
-with main:
+_m1, _c1 = st.columns([4, 1])
+
+with _m1:
 
     # ── Model calibration diagnostic ──────────────────────────
     if calibration["status"] == "ok" and abs(cal_factor - 1.0) > 0.1:
@@ -321,10 +323,30 @@ with main:
         )
         st.caption(f"1 / ({cltv_mult:.2f} × {gm2_frac:.0%}) = {breakeven_amer_365d:.2f}x")
 
+with _c1:
+    context_block(
+        "Unit Economics",
+        "These inputs define what profit looks like for this brand.\n\n"
+        "**GM2%** = margin before marketing. At 50%, half of revenue "
+        "covers COGS, shipping, and logistics.\n\n"
+        "**CLTV expansion** = how much more a new customer spends "
+        "over 12 months beyond their first order. Higher CLTV means "
+        "you can afford higher acquisition costs."
+    )
 
-    # ═══════════════════════════════════════════════════════════════
-    # MONTH-BY-MONTH PLANNER
-    # ═══════════════════════════════════════════════════════════════
+    context_block(
+        "YoY Growth",
+        "0% = assume the brand can spend the same as last year at "
+        "the same efficiency. Set higher if the brand is growing "
+        "(stronger organic, better conversion rates).\n\n"
+        "The observed trend from data helps calibrate this input."
+    )
+
+# ── Section 2: Monthly Spend Planner ────────────────────────────
+
+_m2, _c2 = st.columns([4, 1])
+
+with _m2:
 
     st.markdown("---")
     st.subheader("Monthly Spend Planner")
@@ -428,10 +450,30 @@ with main:
             "**Event Calendar** — otherwise the model assumes no campaign boost."
         )
 
+with _c2:
+    context_separator()
 
-    # ═══════════════════════════════════════════════════════════════
-    # GP3 CURVE FOR SELECTED MONTH
-    # ═══════════════════════════════════════════════════════════════
+    context_block(
+        "GP3 Curve",
+        "The core decision tool. GP3 = gross profit after marketing.\n\n"
+        "**Orange line** (GP3 365D) = profit including CLTV. "
+        "This is what you optimize for.\n\n"
+        "**Red dashed** (GP3 FO) = profit from first order only. "
+        "Below zero means you're investing in future customer value.\n\n"
+        "The **star** marks the optimal spend — where GP3 is maximized."
+    )
+
+    context_tip(
+        "**GP3 FO negative but GP3 365D positive?** You're acquiring "
+        "customers at a loss on the first order but profiting over their "
+        "lifetime. This is healthy if your CLTV assumptions hold."
+    )
+
+# ── Section 3: GP3 curve chart + results ────────────────────────
+
+_m3, _c3 = st.columns([4, 1])
+
+with _m3:
 
     st.markdown("---")
     st.markdown(f"#### GP3 Curve — {sel_label}")
@@ -578,10 +620,14 @@ with main:
             "scale up gradually rather than jumping to this level."
         )
 
+with _c3:
+    pass  # Context for GP3 continues in the next section
 
-    # ═══════════════════════════════════════════════════════════════
-    # HISTORICAL SAME-MONTH BENCHMARK (SANITY CHECK)
-    # ═══════════════════════════════════════════════════════════════
+# ── Section 4: Historical Benchmark ─────────────────────────────
+
+_m4, _c4 = st.columns([4, 1])
+
+with _m4:
 
     benchmark = compute_same_month_benchmark(model_df, sel_month, sel_year, yoy_growth_pct=yoy_growth)
 
@@ -649,10 +695,23 @@ with main:
                 f"a more conservative guide and scaling gradually."
             )
 
+with _c4:
+    context_separator()
 
-    # ═══════════════════════════════════════════════════════════════
-    # CHANNEL ALLOCATION FOR SELECTED MONTH
-    # ═══════════════════════════════════════════════════════════════
+    context_block(
+        "Historical Benchmark",
+        "Compares the model's recommendation to what you actually "
+        "spent in the same month last year, adjusted for growth.\n\n"
+        "A large gap (> 50%) between model and benchmark is a warning "
+        "sign — the model may be extrapolating beyond observed data. "
+        "Use the benchmark as a conservative guide."
+    )
+
+# ── Section 5: Channel Allocation ───────────────────────────────
+
+_m5, _c5 = st.columns([4, 1])
+
+with _m5:
 
     st.markdown("---")
     st.markdown(f"#### Channel Allocation — {sel_label}")
@@ -703,13 +762,25 @@ with main:
             use_container_width=True,
         )
 
+with _c5:
+    context_separator()
 
-    # ═══════════════════════════════════════════════════════════════
-    # LOCK-IN MECHANISM
-    # ═══════════════════════════════════════════════════════════════
+    context_block(
+        "Channel Allocation",
+        "How to split the recommended total spend across channels. "
+        "Based on each channel's saturation curve and marginal "
+        "efficiency at the recommended spend level."
+    )
+
+# ── Section 6: Annual Overview ──────────────────────────────────
+
+_m6, _c6 = st.columns([4, 1])
+
+with _m6:
 
     st.markdown("---")
 
+    # Lock-in mechanism (smaller section, inline)
     is_locked = sel_key in locked_plans
 
     if is_locked:
@@ -737,11 +808,6 @@ with main:
                 "channel_allocation": alloc_df.to_dict("records"),
             }
             st.rerun()
-
-
-    # ═══════════════════════════════════════════════════════════════
-    # ANNUAL OVERVIEW (LOCKED + PROJECTED)
-    # ═══════════════════════════════════════════════════════════════
 
     st.markdown("---")
     st.subheader("Annual Overview")
@@ -903,10 +969,22 @@ with main:
                 f"({historical_max_monthly_spend:,.0f} SEK). Scale gradually and measure real aMER."
             )
 
+with _c6:
+    context_separator()
 
-    # ═══════════════════════════════════════════════════════════════
-    # aMER VS SPEND CURVE
-    # ═══════════════════════════════════════════════════════════════
+    context_block(
+        "Annual Overview",
+        "Solid orange bars = locked months (your confirmed plan). "
+        "Faded bars = projected (model recommendations).\n\n"
+        "The GP3 lines show profitability per month. "
+        "Lock each month as you confirm the plan."
+    )
+
+# ── Section 7: aMER vs Spend ────────────────────────────────────
+
+_m7, _c7 = st.columns([4, 1])
+
+with _m7:
 
     st.markdown("---")
     st.subheader("aMER vs. Spend")
@@ -963,10 +1041,22 @@ with main:
 
     st.plotly_chart(fig_amer, use_container_width=True)
 
+with _c7:
+    context_separator()
 
-    # ═══════════════════════════════════════════════════════════════
-    # HISTORICAL BACKCHECK
-    # ═══════════════════════════════════════════════════════════════
+    context_block(
+        "aMER vs Spend",
+        "As you spend more, aMER drops due to saturation. "
+        "The red line is first-order breakeven, green is 365D breakeven.\n\n"
+        "The optimal spend is where GP3 is maximized — "
+        "not where aMER is highest (that would mean spending very little)."
+    )
+
+# ── Section 8: Historical Backcheck ────────────────────────────
+
+_m8, _c8 = st.columns([4, 1])
+
+with _m8:
 
     st.markdown("---")
     st.subheader("Historical Backcheck")
@@ -1032,41 +1122,51 @@ with main:
             "Re-run the model on **Client Overview** to enable."
         )
 
+with _c8:
+    context_separator()
 
-    # ═══════════════════════════════════════════════════════════════
-    # EXPANDABLE SECTIONS
-    # ═══════════════════════════════════════════════════════════════
+    context_block(
+        "Historical Backcheck",
+        "Actual spend and aMER from historical data. "
+        "Use this to validate the model's recommendations against "
+        "real-world outcomes. The model should roughly predict what "
+        "actually happened."
+    )
 
-    with st.expander("Event efficiency boosts (data-driven)"):
-        st.markdown(
-            "Multipliers computed from historical data: channel efficiency during "
-            "event weeks vs non-event baseline."
-        )
-        boost_data = [
+# ══════════════════════════════════════════════════════════════
+# EXPANDABLE SECTIONS (full-width, outside columns)
+# ══════════════════════════════════════════════════════════════
+
+with st.expander("Event efficiency boosts (data-driven)"):
+    st.markdown(
+        "Multipliers computed from historical data: channel efficiency during "
+        "event weeks vs non-event baseline."
+    )
+    boost_data = [
             {"Event Type": "Heavy discount", "Multiplier": f"{event_boosts['heavy_discount']:.2f}x",
-             "Interpretation": f"{(event_boosts['heavy_discount']-1)*100:+.0f}% efficiency"},
+         "Interpretation": f"{(event_boosts['heavy_discount']-1)*100:+.0f}% efficiency"},
             {"Event Type": "Light discount", "Multiplier": f"{event_boosts['light_discount']:.2f}x",
-             "Interpretation": f"{(event_boosts['light_discount']-1)*100:+.0f}% efficiency"},
+         "Interpretation": f"{(event_boosts['light_discount']-1)*100:+.0f}% efficiency"},
             {"Event Type": "Product drop", "Multiplier": f"{event_boosts['product_drop']:.2f}x",
-             "Interpretation": f"{(event_boosts['product_drop']-1)*100:+.0f}% efficiency"},
-        ]
-        st.dataframe(pd.DataFrame(boost_data), hide_index=True, use_container_width=True)
-        if model_df is None:
-            st.caption(
-                "Event boosts are 1.0x (neutral) because model_df was not loaded. "
-                "Re-run the model on Client Overview to enable data-driven boosts."
-            )
+         "Interpretation": f"{(event_boosts['product_drop']-1)*100:+.0f}% efficiency"},
+    ]
+    st.dataframe(pd.DataFrame(boost_data), hide_index=True, use_container_width=True)
+    if model_df is None:
+        st.caption(
+            "Event boosts are 1.0x (neutral) because model_df was not loaded. "
+            "Re-run the model on Client Overview to enable data-driven boosts."
+        )
 
-    with st.expander("Seasonal efficiency indices"):
-        idx_df = pd.DataFrame([
+with st.expander("Seasonal efficiency indices"):
+    idx_df = pd.DataFrame([
             {"Month": pd.Timestamp(f"2024-{m:02d}-01").strftime("%B"),
-             "Index": f"{seasonal_indices.get(m, 1.0):.2f}"}
-            for m in range(1, 13)
-        ])
-        st.dataframe(idx_df, hide_index=True, use_container_width=True)
+         "Index": f"{seasonal_indices.get(m, 1.0):.2f}"}
+        for m in range(1, 13)
+    ])
+    st.dataframe(idx_df, hide_index=True, use_container_width=True)
 
-    with st.expander("About this model"):
-        st.markdown("""
+with st.expander("About this model"):
+    st.markdown("""
 **GP3 = (New Customer Revenue × (1 + CLTV expansion) × GM2%) − Marketing Spend**
 
 The MMM gives us saturation curves per channel. This model layers unit economics
@@ -1081,115 +1181,30 @@ different recommendation based on seasonal efficiency and planned events.
 Locked months persist in your session and appear in the Annual Overview.
 """)
 
-    with st.expander("Export"):
-        csv_overview = overview_df.to_csv(index=False)
+with st.expander("Export"):
+    csv_overview = overview_df.to_csv(index=False)
+    st.download_button(
+        "Download annual plan (CSV)",
+        csv_overview,
+        file_name=f"spend_amer_plan_{selected_client}.csv",
+        mime="text/csv",
+    )
+
+    csv_curve = gp3_df.to_csv(index=False)
+    st.download_button(
+        "Download GP3 curve data (CSV)",
+        csv_curve,
+        file_name=f"gp3_curve_{selected_client}_{sel_key}.csv",
+        mime="text/csv",
+    )
+
+    if locked_plans:
         st.download_button(
-            "Download annual plan (CSV)",
-            csv_overview,
-            file_name=f"spend_amer_plan_{selected_client}.csv",
-            mime="text/csv",
+            "Download locked plans (JSON)",
+            json.dumps(locked_plans, indent=2, default=str),
+            file_name=f"locked_plans_{selected_client}.json",
+            mime="application/json",
         )
 
-        csv_curve = gp3_df.to_csv(index=False)
-        st.download_button(
-            "Download GP3 curve data (CSV)",
-            csv_curve,
-            file_name=f"gp3_curve_{selected_client}_{sel_key}.csv",
-            mime="text/csv",
-        )
-
-        if locked_plans:
-            st.download_button(
-                "Download locked plans (JSON)",
-                json.dumps(locked_plans, indent=2, default=str),
-                file_name=f"locked_plans_{selected_client}.json",
-                mime="application/json",
-            )
 
 
-# ── Context Panel (right column) ────────────────────────────
-
-with ctx:
-    context_block(
-        "Unit Economics",
-        "These inputs define what profit looks like for this brand.\n\n"
-        "**GM2%** = margin before marketing. At 50%, half of revenue "
-        "covers COGS, shipping, and logistics.\n\n"
-        "**CLTV expansion** = how much more a new customer spends "
-        "over 12 months beyond their first order. Higher CLTV means "
-        "you can afford higher acquisition costs."
-    )
-
-    context_block(
-        "YoY Growth",
-        "0% = assume the brand can spend the same as last year at "
-        "the same efficiency. Set higher if the brand is growing "
-        "(stronger organic, better conversion rates).\n\n"
-        "The observed trend from data helps calibrate this input."
-    )
-
-    context_separator()
-
-    context_block(
-        "GP3 Curve",
-        "The core decision tool. GP3 = gross profit after marketing.\n\n"
-        "**Orange line** (GP3 365D) = profit including CLTV. "
-        "This is what you optimize for.\n\n"
-        "**Red dashed** (GP3 FO) = profit from first order only. "
-        "Below zero means you're investing in future customer value.\n\n"
-        "The **star** marks the optimal spend — where GP3 is maximized."
-    )
-
-    context_tip(
-        "**GP3 FO negative but GP3 365D positive?** You're acquiring "
-        "customers at a loss on the first order but profiting over their "
-        "lifetime. This is healthy if your CLTV assumptions hold."
-    )
-
-    context_separator()
-
-    context_block(
-        "Historical Benchmark",
-        "Compares the model's recommendation to what you actually "
-        "spent in the same month last year, adjusted for growth.\n\n"
-        "A large gap (> 50%) between model and benchmark is a warning "
-        "sign — the model may be extrapolating beyond observed data. "
-        "Use the benchmark as a conservative guide."
-    )
-
-    context_separator()
-
-    context_block(
-        "Channel Allocation",
-        "How to split the recommended total spend across channels. "
-        "Based on each channel's saturation curve and marginal "
-        "efficiency at the recommended spend level."
-    )
-
-    context_separator()
-
-    context_block(
-        "Annual Overview",
-        "Solid orange bars = locked months (your confirmed plan). "
-        "Faded bars = projected (model recommendations).\n\n"
-        "The GP3 lines show profitability per month. "
-        "Lock each month as you confirm the plan."
-    )
-
-    context_block(
-        "aMER vs Spend",
-        "As you spend more, aMER drops due to saturation. "
-        "The red line is first-order breakeven, green is 365D breakeven.\n\n"
-        "The optimal spend is where GP3 is maximized — "
-        "not where aMER is highest (that would mean spending very little)."
-    )
-
-    context_separator()
-
-    context_block(
-        "Historical Backcheck",
-        "Actual spend and aMER from historical data. "
-        "Use this to validate the model's recommendations against "
-        "real-world outcomes. The model should roughly predict what "
-        "actually happened."
-    )
