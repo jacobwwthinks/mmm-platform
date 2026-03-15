@@ -205,6 +205,47 @@ def _effective_calibration(
         return calibration_factor + (1.0 - calibration_factor) * fade
 
 
+def _extrapolation_confidence(
+    total_spend: float,
+    historical_avg_spend: float,
+) -> float:
+    """
+    Discount factor for model predictions at spend levels beyond observed data.
+
+    The MMM saturation curves are fitted on historical spend ranges. As spend
+    moves far beyond that range, the model is extrapolating — and predictions
+    become increasingly unreliable. This function applies a confidence discount
+    so the optimizer doesn't treat extrapolated predictions as trustworthy.
+
+    Without this, GP3 can stay positive at very high spend (because organic
+    revenue subsidizes it), leading the optimizer to recommend the same
+    max-spend for every month regardless of seasonal context.
+
+    The discount is calibrated so that:
+      - At historical spend: full confidence (1.0)
+      - At 1.3x: ~95% confidence
+      - At 2.0x: ~65% confidence
+      - At 3.0x: ~30% confidence
+
+    Combined with seasonal_multiplier, this creates natural month-to-month
+    variation: strong months sustain higher spend before the discounted
+    GP3 turns negative.
+    """
+    if historical_avg_spend <= 0:
+        return 1.0
+
+    ratio = total_spend / (historical_avg_spend + 1e-8)
+
+    if ratio <= 1.0:
+        return 1.0
+    elif ratio >= 3.5:
+        return 0.25
+
+    # Smooth power-curve discount: starts gentle, steepens at higher spend
+    t = (ratio - 1.0) / 2.5  # 0 at 1x, 1.0 at 3.5x
+    return max(0.25, 1.0 - 0.75 * (t ** 1.4))
+
+
 # ═══════════════════════════════════════════════════════════════
 # GP3 CURVE COMPUTATION
 # ═══════════════════════════════════════════════════════════════
@@ -217,7 +258,7 @@ def compute_gp3_curve(
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
     n_points: int = 150,
-    max_spend_mult: float = 3.0,
+    max_spend_mult: float = 5.0,
 ) -> pd.DataFrame:
     """
     Compute GP3 at various total spend levels.
@@ -257,7 +298,9 @@ def compute_gp3_curve(
 
         # Apply calibration with diminishing weight beyond historical spend
         eff_cal = _effective_calibration(calibration_factor, total_spend, current_total)
-        channel_rev *= eff_cal * seasonal_multiplier
+        # Apply extrapolation confidence discount beyond observed data range
+        extrap_conf = _extrapolation_confidence(total_spend, current_total)
+        channel_rev *= eff_cal * extrap_conf * seasonal_multiplier
 
         total_new_rev = organic_weekly_revenue + channel_rev
         rev_365d = total_new_rev * cltv_mult
@@ -300,7 +343,7 @@ def find_optimal_spend(
     organic_weekly_revenue: float = 0,
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
-    max_spend_mult: float = 3.0,
+    max_spend_mult: float = 5.0,
 ) -> dict:
     """
     Find the weekly spend level that maximizes 365D GP3.
@@ -339,7 +382,9 @@ def find_optimal_spend(
             channel_rev += ch_rev
         # Diminishing calibration: full at historical spend, fading beyond
         eff_cal = _effective_calibration(calibration_factor, total_spend, current_total)
-        channel_rev *= eff_cal * seasonal_multiplier
+        # Extrapolation confidence discount
+        extrap_conf = _extrapolation_confidence(total_spend, current_total)
+        channel_rev *= eff_cal * extrap_conf * seasonal_multiplier
         total_new_rev = organic_weekly_revenue + channel_rev
         gp3_first_order = total_new_rev * gm2_frac - total_spend
         gp3_365d = total_new_rev * cltv_mult * gm2_frac - total_spend
@@ -363,11 +408,12 @@ def find_optimal_spend(
 
     # Channel breakdown at optimal
     eff_cal_optimal = _effective_calibration(calibration_factor, optimal_spend, current_total)
+    extrap_conf_optimal = _extrapolation_confidence(optimal_spend, current_total)
     channel_allocation = {}
     for ch in channels:
         ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev *= eff_cal_optimal * seasonal_multiplier
+        ch_rev *= eff_cal_optimal * extrap_conf_optimal * seasonal_multiplier
         channel_allocation[ch] = {
             "weekly_spend": ch_spend,
             "monthly_spend": ch_spend * 4.33,
@@ -963,12 +1009,13 @@ def optimize_channel_allocation(
 
     current_total = sum(current_spend.values())
     eff_cal = _effective_calibration(calibration_factor, total_weekly_spend, current_total)
+    extrap_conf = _extrapolation_confidence(total_weekly_spend, current_total)
 
     def neg_revenue(allocation):
         total_rev = 0
         for i, ch in enumerate(channels):
             rev = predict_channel_revenue(allocation[i], params[ch], adstock_means[ch])
-            total_rev += rev * eff_cal * seasonal_multiplier
+            total_rev += rev * eff_cal * extrap_conf * seasonal_multiplier
         return -total_rev
 
     x0 = np.array([
@@ -988,7 +1035,7 @@ def optimize_channel_allocation(
     for i, ch in enumerate(channels):
         ch_spend = result.x[i]
         ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev *= eff_cal * seasonal_multiplier
+        ch_rev *= eff_cal * extrap_conf * seasonal_multiplier
         rows.append({
             "channel": ch,
             "weekly_spend": round(ch_spend, 0),

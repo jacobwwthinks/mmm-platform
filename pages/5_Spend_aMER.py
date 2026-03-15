@@ -451,7 +451,7 @@ with main:
         seasonal_multiplier=effective_mult,
         calibration_factor=cal_factor,
         n_points=200,
-        max_spend_mult=3.0,
+        max_spend_mult=5.0,
     )
 
     # Clip to actionable range (from 20% of current spend onward)
