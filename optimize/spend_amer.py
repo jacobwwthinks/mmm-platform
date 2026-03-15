@@ -7,17 +7,15 @@ costs including marketing).
 
     GP3 = (New Customer Revenue × (1 + CLTV_expansion) × GM2%) − Marketing Spend
 
-The breakeven aMER (acquisition Marketing Efficiency Ratio) is:
+Two breakeven aMER thresholds:
+    First-order breakeven aMER = 1 / GM2%
+        (covers variable costs on the first transaction alone)
+    365D breakeven aMER = 1 / ((1 + CLTV_expansion) × GM2%)
+        (covers costs when you account for repeat purchases over 12 months)
 
-    breakeven_aMER = 1 / ((1 + CLTV_expansion) × GM2%)
-
-At this aMER, each SEK of spend generates exactly enough contribution margin
-to cover itself. The optimal spend is where marginal GP3 = 0, i.e., the point
-on the saturation curve where spending one more SEK produces exactly one SEK
-of contribution margin.
-
-The model accounts for seasonal variation in channel efficiency and organic
-demand to produce month-by-month spend recommendations.
+The optimal spend is where marginal GP3 = 0: the point on the saturation
+curve where one more SEK of spend produces exactly one SEK of 365D
+contribution margin.
 """
 
 import numpy as np
@@ -49,7 +47,6 @@ def _get_adstock_training_mean(params: dict, n_weeks: int, roas_row) -> float:
     # Fallback: estimate from average spend and decay
     avg_weekly_spend = roas_row["total_spend"] / max(n_weeks, 1)
     decay = params["adstock_decay"]
-    # Steady-state adstock ≈ spend / (1 - decay), discounted for warmup
     return avg_weekly_spend / (1 - decay + 1e-8) * 0.85
 
 
@@ -64,15 +61,6 @@ def predict_channel_revenue(
 
     Uses the stored training adstock mean for correct saturation normalization,
     avoiding the scale-invariance issue in hill_saturation().
-
-    Args:
-        spend_weekly: Constant weekly spend level (SEK)
-        params: Channel parameters from MMMResults.channel_params
-        adstock_training_mean: Mean of adstocked spend during training
-        n_sim_weeks: Number of weeks to simulate (for adstock warmup)
-
-    Returns:
-        Predicted weekly revenue contribution from this channel
     """
     if spend_weekly <= 0:
         return 0.0
@@ -81,7 +69,6 @@ def predict_channel_revenue(
     adstocked = geometric_adstock(spend_series, params["adstock_decay"], max_lag=8)
 
     # Normalize by TRAINING mean (not the new series mean)
-    # This preserves absolute spend-level information
     x_norm = adstocked / (adstock_training_mean + 1e-8)
 
     # Hill saturation (manual — bypasses hill_saturation() which renormalizes)
@@ -110,20 +97,12 @@ def compute_gp3_curve(
     """
     Compute GP3 at various total spend levels.
 
-    This generates the "GP3 parabola" — the concave curve showing how GP3
-    rises (as spend generates revenue) then falls (as saturation causes
-    diminishing returns that can't cover the marginal cost of spend).
-
-    Returns DataFrame with columns:
-        weekly_spend, monthly_spend, paid_new_customer_revenue,
-        total_new_customer_revenue, revenue_365d, contribution_margin,
-        gp3, gp3_monthly, amer, marginal_roas
+    Returns DataFrame with spend, revenue, GP3 (first order + 365D), and aMER.
     """
     params = results.channel_params
     roas_df = results.channel_roas
     channels = [ch for ch in params.keys() if ch != "email"]
 
-    # Current weekly spend and adstock means per channel
     current_spend = {}
     adstock_means = {}
     for ch in channels:
@@ -151,8 +130,8 @@ def compute_gp3_curve(
 
         total_new_rev = organic_weekly_revenue + channel_rev
         rev_365d = total_new_rev * cltv_mult
-        cm = rev_365d * gm2_frac
-        gp3 = cm - total_spend
+        gp3_first_order = total_new_rev * gm2_frac - total_spend
+        gp3_365d = rev_365d * gm2_frac - total_spend
         amer = total_new_rev / (total_spend + 1e-8) if total_spend > 0 else 0
 
         rows.append({
@@ -161,15 +140,15 @@ def compute_gp3_curve(
             "paid_new_customer_revenue": channel_rev,
             "total_new_customer_revenue": total_new_rev,
             "revenue_365d": rev_365d,
-            "contribution_margin": cm,
-            "gp3": gp3,
-            "gp3_monthly": gp3 * 4.33,
+            "gp3_first_order": gp3_first_order,
+            "gp3_first_order_monthly": gp3_first_order * 4.33,
+            "gp3_365d": gp3_365d,
+            "gp3_365d_monthly": gp3_365d * 4.33,
             "amer": amer,
         })
 
     df = pd.DataFrame(rows)
 
-    # Marginal ROAS = d(paid_revenue) / d(spend)
     if len(df) > 1:
         d_rev = np.gradient(df["paid_new_customer_revenue"].values, df["weekly_spend"].values)
         df["marginal_roas"] = d_rev
@@ -192,15 +171,10 @@ def find_optimal_spend(
     max_spend_mult: float = 5.0,
 ) -> dict:
     """
-    Find the weekly spend level that maximizes GP3.
+    Find the weekly spend level that maximizes 365D GP3.
 
-    The optimum is where marginal channel revenue × CLTV × GM2% = 1,
-    i.e., the last SEK of spend produces exactly 1 SEK of contribution margin.
-
-    Returns:
-        Dict with optimal_weekly_spend, optimal_monthly_spend,
-        optimal_gp3_weekly/monthly, new_customer_revenue, amer,
-        breakeven_amer, channel_allocation, comparison to current.
+    Returns dict with optimal spend, GP3 (both first-order and 365D),
+    both breakeven aMER thresholds, channel allocation, and current comparison.
     """
     params = results.channel_params
     roas_df = results.channel_roas
@@ -218,11 +192,11 @@ def find_optimal_spend(
 
     cltv_mult = 1 + cltv_expansion_pct / 100
     gm2_frac = gm2_pct / 100
-    breakeven_amer = 1 / (cltv_mult * gm2_frac)
+    breakeven_amer_first_order = 1 / gm2_frac
+    breakeven_amer_365d = 1 / (cltv_mult * gm2_frac)
 
-    def neg_gp3(total_spend):
-        if total_spend <= 0:
-            return -(organic_weekly_revenue * cltv_mult * gm2_frac)
+    def _compute_at_spend(total_spend):
+        """Compute revenue and GP3 at a given spend level."""
         channel_rev = 0
         for ch in channels:
             ch_spend = total_spend * alloc_ratios.get(ch, 1 / len(channels))
@@ -230,20 +204,26 @@ def find_optimal_spend(
             channel_rev += ch_rev
         channel_rev *= seasonal_multiplier
         total_new_rev = organic_weekly_revenue + channel_rev
-        gp3 = total_new_rev * cltv_mult * gm2_frac - total_spend
+        gp3_first_order = total_new_rev * gm2_frac - total_spend
+        gp3_365d = total_new_rev * cltv_mult * gm2_frac - total_spend
+        return total_new_rev, channel_rev, gp3_first_order, gp3_365d
+
+    def neg_gp3_365d(total_spend):
+        if total_spend <= 0:
+            return -(organic_weekly_revenue * cltv_mult * gm2_frac)
+        _, _, _, gp3 = _compute_at_spend(total_spend)
         return -gp3
 
     result = minimize_scalar(
-        neg_gp3,
+        neg_gp3_365d,
         bounds=(0, current_total * max_spend_mult),
         method="bounded",
     )
 
     optimal_spend = result.x
-    optimal_gp3 = -result.fun
+    opt_rev, opt_ch_rev, opt_gp3_fo, opt_gp3_365d = _compute_at_spend(optimal_spend)
 
     # Channel breakdown at optimal
-    total_channel_rev = 0
     channel_allocation = {}
     for ch in channels:
         ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
@@ -253,38 +233,36 @@ def find_optimal_spend(
             "monthly_spend": ch_spend * 4.33,
             "weekly_revenue": ch_rev,
         }
-        total_channel_rev += ch_rev
 
-    total_new_rev = organic_weekly_revenue + total_channel_rev
-
-    # Current GP3 for comparison
-    current_channel_rev = 0
-    for ch in channels:
-        ch_rev = predict_channel_revenue(current_spend[ch], params[ch], adstock_means[ch]) * seasonal_multiplier
-        current_channel_rev += ch_rev
-    current_total_rev = organic_weekly_revenue + current_channel_rev
-    current_gp3 = current_total_rev * cltv_mult * gm2_frac - current_total
+    # Current comparison
+    cur_rev, _, cur_gp3_fo, cur_gp3_365d = _compute_at_spend(current_total)
 
     return {
         "optimal_weekly_spend": optimal_spend,
         "optimal_monthly_spend": optimal_spend * 4.33,
-        "optimal_gp3_weekly": optimal_gp3,
-        "optimal_gp3_monthly": optimal_gp3 * 4.33,
-        "new_customer_revenue_weekly": total_new_rev,
-        "new_customer_revenue_monthly": total_new_rev * 4.33,
-        "amer_at_optimal": total_new_rev / (optimal_spend + 1e-8),
-        "breakeven_amer": breakeven_amer,
+        "optimal_gp3_first_order_weekly": opt_gp3_fo,
+        "optimal_gp3_first_order_monthly": opt_gp3_fo * 4.33,
+        "optimal_gp3_365d_weekly": opt_gp3_365d,
+        "optimal_gp3_365d_monthly": opt_gp3_365d * 4.33,
+        "new_customer_revenue_weekly": opt_rev,
+        "new_customer_revenue_monthly": opt_rev * 4.33,
+        "amer_at_optimal": opt_rev / (optimal_spend + 1e-8),
+        "breakeven_amer_first_order": breakeven_amer_first_order,
+        "breakeven_amer_365d": breakeven_amer_365d,
         "channel_allocation": channel_allocation,
         "current_weekly_spend": current_total,
         "current_monthly_spend": current_total * 4.33,
-        "current_gp3_weekly": current_gp3,
-        "current_gp3_monthly": current_gp3 * 4.33,
+        "current_gp3_first_order_weekly": cur_gp3_fo,
+        "current_gp3_first_order_monthly": cur_gp3_fo * 4.33,
+        "current_gp3_365d_weekly": cur_gp3_365d,
+        "current_gp3_365d_monthly": cur_gp3_365d * 4.33,
+        "current_amer": cur_rev / (current_total + 1e-8),
         "spend_change_pct": (optimal_spend - current_total) / (current_total + 1e-8) * 100,
     }
 
 
 # ═══════════════════════════════════════════════════════════════
-# SEASONAL INDICES
+# SEASONAL & EVENT INDICES (DATA-DRIVEN)
 # ═══════════════════════════════════════════════════════════════
 
 def compute_seasonal_indices(
@@ -297,9 +275,6 @@ def compute_seasonal_indices(
     For each calendar month, computes the ratio of channel efficiency
     (contribution per SEK of spend) vs the overall average.
 
-    November might be 1.3 (30% more efficient per SEK),
-    January might be 0.8 (20% less efficient).
-
     Returns:
         Dict {month_number: efficiency_index} where 1.0 = average month
     """
@@ -310,7 +285,6 @@ def compute_seasonal_indices(
     contrib_df["week_start"] = pd.to_datetime(contrib_df["week_start"])
     contrib_df["month"] = contrib_df["week_start"].dt.month
 
-    # Channel contribution columns (exclude email, metadata)
     channel_cols = [c for c in contrib_df.columns
                     if c not in ["week_start", "month", "email"]]
     if not channel_cols:
@@ -318,7 +292,6 @@ def compute_seasonal_indices(
 
     contrib_df["total_contrib"] = contrib_df[channel_cols].sum(axis=1)
 
-    # Get weekly spend from model_df
     mdf = model_df.copy()
     mdf["week_start"] = pd.to_datetime(mdf["week_start"])
     mdf["month"] = mdf["week_start"].dt.month
@@ -329,7 +302,6 @@ def compute_seasonal_indices(
         mdf[["week_start", "total_spend"]], on="week_start"
     )
 
-    # Monthly avg efficiency = avg(contribution) / avg(spend)
     monthly = merged.groupby("month").agg(
         avg_contrib=("total_contrib", "mean"),
         avg_spend=("total_spend", "mean"),
@@ -337,7 +309,6 @@ def compute_seasonal_indices(
     )
     monthly["efficiency"] = monthly["avg_contrib"] / (monthly["avg_spend"] + 1e-8)
 
-    # Normalize so mean = 1.0
     overall_eff = monthly["efficiency"].mean()
     monthly["index"] = monthly["efficiency"] / (overall_eff + 1e-8)
 
@@ -348,26 +319,101 @@ def compute_seasonal_indices(
     return indices
 
 
+def compute_event_boosts(
+    results: MMMResults,
+    model_df: Optional[pd.DataFrame] = None,
+    events_df: Optional[pd.DataFrame] = None,
+) -> dict:
+    """
+    Compute data-driven efficiency multipliers for event types.
+
+    Compares channel efficiency (contribution per SEK of spend) during
+    event weeks vs baseline (non-event) weeks. Falls back to 1.0 if
+    insufficient data.
+
+    Returns:
+        Dict {"heavy_discount": float, "light_discount": float, "product_drop": float}
+    """
+    defaults = {"heavy_discount": 1.0, "light_discount": 1.0, "product_drop": 1.0}
+
+    if model_df is None or events_df is None or events_df.empty:
+        return defaults
+
+    try:
+        contrib_df = results.channel_contributions.copy()
+        contrib_df["week_start"] = pd.to_datetime(contrib_df["week_start"])
+        channel_cols = [c for c in contrib_df.columns
+                        if c not in ["week_start", "email"]]
+        contrib_df["total_contrib"] = contrib_df[channel_cols].sum(axis=1)
+
+        mdf = model_df.copy()
+        mdf["week_start"] = pd.to_datetime(mdf["week_start"])
+        spend_cols = [c for c in mdf.columns if c.endswith("_spend")]
+        mdf["total_spend"] = mdf[spend_cols].sum(axis=1)
+
+        edf = events_df.copy()
+        edf["week_start"] = pd.to_datetime(edf["week_start"])
+
+        merged = contrib_df[["week_start", "total_contrib"]].merge(
+            mdf[["week_start", "total_spend"]], on="week_start"
+        ).merge(
+            edf[["week_start", "discount_campaign", "product_drop"]],
+            on="week_start", how="left"
+        )
+        merged["discount_campaign"] = merged["discount_campaign"].fillna(0)
+        merged["product_drop"] = merged["product_drop"].fillna(0)
+        merged["efficiency"] = merged["total_contrib"] / (merged["total_spend"] + 1e-8)
+
+        # Baseline: weeks with no events at all
+        baseline_mask = (merged["discount_campaign"] == 0) & (merged["product_drop"] == 0)
+        baseline_eff = merged.loc[baseline_mask, "efficiency"].mean()
+        if baseline_eff <= 0 or not np.isfinite(baseline_eff):
+            return defaults
+
+        result = {}
+
+        # Heavy discount (discount_campaign == 2)
+        heavy = merged[merged["discount_campaign"] == 2]["efficiency"]
+        result["heavy_discount"] = float(heavy.mean() / baseline_eff) if len(heavy) >= 2 else 1.0
+
+        # Light discount (discount_campaign == 1)
+        light = merged[merged["discount_campaign"] == 1]["efficiency"]
+        result["light_discount"] = float(light.mean() / baseline_eff) if len(light) >= 2 else 1.0
+
+        # Product drop
+        drops = merged[merged["product_drop"] > 0]["efficiency"]
+        result["product_drop"] = float(drops.mean() / baseline_eff) if len(drops) >= 2 else 1.0
+
+        # Clamp to reasonable range (0.5 – 3.0) to avoid outliers
+        for k in result:
+            result[k] = max(0.5, min(3.0, result[k]))
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"Could not compute event boosts: {e}")
+        return defaults
+
+
 def compute_monthly_organic(
     results: MMMResults,
     model_df: Optional[pd.DataFrame] = None,
 ) -> dict:
     """
     Get average organic (baseline) weekly revenue by calendar month.
-
-    Returns:
-        Dict {month_number: avg_weekly_organic_revenue}
     """
     baseline = results.baseline_contribution
 
     if model_df is not None:
         weeks = pd.to_datetime(model_df["week_start"])
+        months = weeks.dt.month
     else:
         weeks = pd.date_range(
             results.date_range[0], periods=results.n_weeks, freq="W-MON"
         )
+        months = weeks.month  # DatetimeIndex uses .month, not .dt.month
 
-    df = pd.DataFrame({"month": weeks.dt.month, "baseline": baseline})
+    df = pd.DataFrame({"month": months, "baseline": baseline})
     monthly_avg = df.groupby("month")["baseline"].mean()
 
     overall_avg = float(monthly_avg.mean())
@@ -375,6 +421,53 @@ def compute_monthly_organic(
         m: float(monthly_avg[m]) if m in monthly_avg.index else overall_avg
         for m in range(1, 13)
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# HISTORICAL BACKCHECK
+# ═══════════════════════════════════════════════════════════════
+
+def compute_historical_backcheck(
+    results: MMMResults,
+    model_df: Optional[pd.DataFrame] = None,
+) -> Optional[pd.DataFrame]:
+    """
+    Compute historical monthly spend and aMER for validating projections.
+
+    If the model projects spending 1.5M/month but you've never spent
+    more than 500K, that's a red flag. This function provides the
+    historical context to sanity-check recommendations.
+
+    Returns DataFrame with month, total_spend, total_revenue, amer.
+    """
+    if model_df is None:
+        return None
+
+    try:
+        mdf = model_df.copy()
+        mdf["week_start"] = pd.to_datetime(mdf["week_start"])
+        mdf["year_month"] = mdf["week_start"].dt.to_period("M")
+
+        spend_cols = [c for c in mdf.columns if c.endswith("_spend")]
+        mdf["total_spend"] = mdf[spend_cols].sum(axis=1)
+
+        # Use new_revenue if available, otherwise total revenue
+        rev_col = "new_revenue" if "new_revenue" in mdf.columns else "revenue"
+
+        monthly = mdf.groupby("year_month").agg(
+            total_spend=("total_spend", "sum"),
+            total_revenue=(rev_col, "sum"),
+            n_weeks=("total_spend", "count"),
+        ).reset_index()
+
+        monthly["amer"] = monthly["total_revenue"] / (monthly["total_spend"] + 1e-8)
+        monthly["month_name"] = monthly["year_month"].astype(str)
+
+        return monthly
+
+    except Exception as e:
+        logger.warning(f"Could not compute historical backcheck: {e}")
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -387,22 +480,24 @@ def monthly_spend_plan(
     cltv_expansion_pct: float,
     seasonal_indices: dict,
     monthly_organic: dict,
+    event_boosts: dict,
     months_ahead: int = 12,
     events_df: Optional[pd.DataFrame] = None,
+    historical_max_monthly_spend: float = 0,
 ) -> pd.DataFrame:
     """
     Generate a month-by-month spend plan.
 
-    For each forward month:
-    1. Look up seasonal efficiency index for that calendar month
-    2. Check for planned events (discount campaigns → efficiency boost)
-    3. Find optimal spend given the effective multiplier
-    4. Project GP3 and aMER
-
-    Returns DataFrame with one row per month.
+    Uses data-driven event boosts (from compute_event_boosts) rather than
+    hardcoded multipliers. Flags months where recommended spend exceeds
+    historical maximum.
     """
     today = datetime.date.today()
     rows = []
+
+    heavy_mult = event_boosts.get("heavy_discount", 1.0)
+    light_mult = event_boosts.get("light_discount", 1.0)
+    drop_mult = event_boosts.get("product_drop", 1.0)
 
     for m in range(months_ahead):
         month_num = (today.month - 1 + m) % 12 + 1
@@ -411,8 +506,6 @@ def monthly_spend_plan(
         seasonal_mult = seasonal_indices.get(month_num, 1.0)
         organic_weekly = monthly_organic.get(month_num, 0)
 
-        # Event boost: planned discount campaigns and product drops
-        # increase channel efficiency (better conversion during events)
         event_boost = 1.0
         has_heavy_discount = False
         has_light_discount = False
@@ -428,19 +521,21 @@ def monthly_spend_plan(
             if not month_events.empty:
                 if "discount_campaign" in month_events.columns:
                     has_heavy_discount = (month_events["discount_campaign"] == 2).any()
-                    has_light_discount = (month_events["discount_campaign"] == 1).any()
+                    has_light_discount = (
+                        (month_events["discount_campaign"] == 1).any()
+                        and not has_heavy_discount
+                    )
                     if has_heavy_discount:
-                        event_boost *= 1.30
+                        event_boost *= heavy_mult
                     elif has_light_discount:
-                        event_boost *= 1.15
+                        event_boost *= light_mult
                 if "product_drop" in month_events.columns:
                     has_product_drop = (month_events["product_drop"] > 0).any()
                     if has_product_drop:
-                        event_boost *= 1.10
+                        event_boost *= drop_mult
 
         effective_mult = seasonal_mult * event_boost
 
-        # Find optimal for this month's conditions
         optimal = find_optimal_spend(
             results, gm2_pct, cltv_expansion_pct,
             organic_weekly_revenue=organic_weekly,
@@ -450,11 +545,17 @@ def monthly_spend_plan(
         month_label = datetime.date(year, month_num, 1).strftime("%b %Y")
         events_str = []
         if has_heavy_discount:
-            events_str.append("Heavy discount")
+            events_str.append(f"Heavy discount ({heavy_mult:.0%})")
         elif has_light_discount:
-            events_str.append("Light discount")
+            events_str.append(f"Light discount ({light_mult:.0%})")
         if has_product_drop:
-            events_str.append("Product drop")
+            events_str.append(f"Product drop ({drop_mult:.0%})")
+
+        rec_monthly = optimal["optimal_monthly_spend"]
+        exceeds_historical = (
+            historical_max_monthly_spend > 0
+            and rec_monthly > historical_max_monthly_spend * 1.5
+        )
 
         rows.append({
             "month": f"{year}-{month_num:02d}",
@@ -463,13 +564,16 @@ def monthly_spend_plan(
             "event_boost": round(event_boost, 2),
             "effective_multiplier": round(effective_mult, 2),
             "recommended_weekly_spend": round(optimal["optimal_weekly_spend"], 0),
-            "recommended_monthly_spend": round(optimal["optimal_monthly_spend"], 0),
-            "estimated_weekly_gp3": round(optimal["optimal_gp3_weekly"], 0),
-            "estimated_monthly_gp3": round(optimal["optimal_gp3_monthly"], 0),
+            "recommended_monthly_spend": round(rec_monthly, 0),
+            "estimated_weekly_gp3_fo": round(optimal["optimal_gp3_first_order_weekly"], 0),
+            "estimated_monthly_gp3_fo": round(optimal["optimal_gp3_first_order_monthly"], 0),
+            "estimated_weekly_gp3_365d": round(optimal["optimal_gp3_365d_weekly"], 0),
+            "estimated_monthly_gp3_365d": round(optimal["optimal_gp3_365d_monthly"], 0),
             "estimated_weekly_revenue": round(optimal["new_customer_revenue_weekly"], 0),
             "estimated_monthly_revenue": round(optimal["new_customer_revenue_monthly"], 0),
             "amer": round(optimal["amer_at_optimal"], 2),
             "events": ", ".join(events_str) if events_str else "—",
+            "exceeds_historical": exceeds_historical,
         })
 
     return pd.DataFrame(rows)
@@ -488,9 +592,6 @@ def optimize_channel_allocation(
 ) -> pd.DataFrame:
     """
     Given a total spend level, find the optimal channel split.
-
-    Uses SLSQP to maximize total channel revenue subject to
-    per-channel min/max constraints.
     """
     params = results.channel_params
     roas_df = results.channel_roas
@@ -513,7 +614,6 @@ def optimize_channel_allocation(
             total_rev += rev * seasonal_multiplier
         return -total_rev
 
-    # Initialize proportionally to current allocation
     x0 = np.array([
         current_spend[ch] / (current_total + 1e-8) * total_weekly_spend
         for ch in channels
