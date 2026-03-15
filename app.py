@@ -99,6 +99,7 @@ st.sidebar.page_link("pages/1_Client_Overview.py", label="Client Overview")
 st.sidebar.page_link("pages/2_Channel_Analysis.py", label="Channel Analysis")
 st.sidebar.page_link("pages/3_Budget_Optimizer.py", label="Budget Optimizer")
 st.sidebar.page_link("pages/4_Event_Calendar.py", label="Event Calendar")
+st.sidebar.page_link("pages/5_Spend_aMER.py", label="Spend-aMER")
 
 st.sidebar.markdown("---")
 
@@ -162,6 +163,7 @@ Welcome to the MMM Platform. Use the pages in the sidebar to:
 2. **Channel Analysis** — Deep-dive per channel: ROAS, saturation, adstock
 3. **Budget Optimizer** — What-if scenarios and optimal budget allocation
 4. **Event Calendar** — Manage promotional events, product drops, holidays
+5. **Spend-aMER** — GP3-optimized spend planning by month with seasonal adjustments
 
 ### Getting Started
 
@@ -169,7 +171,7 @@ To run the model for a client:
 1. Ensure all channels are connected in Windsor.ai (see sidebar)
 2. Go to **Client Overview** and click \"Fetch Data & Run Model\"
 3. Review the results across all pages
-4. Use the **Budget Optimizer** for allocation recommendations
+4. Use **Spend-aMER** for GP3-optimized monthly spend recommendations
 """)
 
 # Quick stats if results exist

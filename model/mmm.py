@@ -472,6 +472,7 @@ class LightweightMMM:
                 "saturation_lam": float(lam),
                 "beta": float(beta),
                 "beta_raw": float(beta * y_std),  # in revenue units
+                "adstock_training_mean": float(adstocked.mean()),  # for correct out-of-sample prediction
             }
             idx += 4
 
