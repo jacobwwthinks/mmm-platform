@@ -29,6 +29,7 @@ PLOTLY_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     font_color="#E6EDF3",
     font_family="Inter, sans-serif",
+    title_font=dict(size=13, color="#C9D1D9"),
 )
 ORANGE = "#F58518"
 
@@ -73,8 +74,6 @@ if results is None:
 # ── Section 1: ROAS Comparison ────────────────────────────────
 _m1, _c1 = st.columns([4, 1])
 with _m1:
-    st.subheader("Channel ROAS Comparison")
-
     roas_df = results.channel_roas.copy()
     paid_roas_df = roas_df[roas_df["channel"] != "email"].copy()
     paid_roas_df["channel_display"] = paid_roas_df["channel"].str.replace("_", " ").str.title()
@@ -95,7 +94,7 @@ with _m1:
         textposition="outside",
     ))
     fig_roas.add_hline(y=1.0, line_dash="dash", line_color="#E15759", annotation_text="Breakeven (1.0x)")
-    fig_roas.update_layout(yaxis_title="ROAS (Return on Ad Spend)", height=400, showlegend=False, **PLOTLY_LAYOUT)
+    fig_roas.update_layout(title="Channel ROAS Comparison", yaxis_title="ROAS (Return on Ad Spend)", height=400, showlegend=False, **PLOTLY_LAYOUT)
     st.plotly_chart(fig_roas, use_container_width=True)
 
     email_roas = roas_df[roas_df["channel"] == "email"]
@@ -127,8 +126,6 @@ contrib = results.channel_contributions[selected_key].values
 # ── Section 2: Saturation Curve ───────────────────────────────
 _m2, _c2 = st.columns([4, 1])
 with _m2:
-    st.subheader(f"Saturation Curve — {selected}")
-
     spend_range = np.linspace(0, contrib.max() * 3, 200)
     saturated = hill_saturation(spend_range, params["saturation_alpha"], params["saturation_lam"])
 
@@ -143,7 +140,8 @@ with _m2:
         text=[f"Current ({current_sat:.0%} saturated)"], textposition="top right",
         name="Current spend level",
     ))
-    fig_sat.update_layout(xaxis_title="Spend Level (adstocked)", yaxis_title="Effect (0 = none, 1 = fully saturated)",
+    fig_sat.update_layout(title=f"Saturation Curve — {selected}",
+                          xaxis_title="Spend Level (adstocked)", yaxis_title="Effect (0 = none, 1 = fully saturated)",
                           height=350, yaxis_range=[0, 1.05], **PLOTLY_LAYOUT)
     st.plotly_chart(fig_sat, use_container_width=True)
 
@@ -169,8 +167,6 @@ with _c2:
 # ── Section 3: Adstock Decay ─────────────────────────────────
 _m3, _c3 = st.columns([4, 1])
 with _m3:
-    st.subheader(f"Adstock Decay — {selected}")
-
     decay = params["adstock_decay"]
     max_lag = 8
     lag_weights = [decay ** i for i in range(max_lag + 1)]
@@ -179,8 +175,10 @@ with _m3:
     fig_adstock = go.Figure()
     fig_adstock.add_trace(go.Bar(x=lag_weeks, y=lag_weights, marker_color=ORANGE,
                                   text=[f"{w:.1%}" for w in lag_weights], textposition="outside"))
-    fig_adstock.update_layout(xaxis_title="Weeks After Ad Exposure", yaxis_title="Remaining Effect",
-                               height=300, yaxis_range=[0, 1.1], xaxis=dict(tickmode="linear"), **PLOTLY_LAYOUT)
+    fig_adstock.update_layout(title=f"Adstock Decay — {selected}",
+                               xaxis_title="Weeks After Ad Exposure", yaxis_title="Remaining Effect",
+                               height=350, yaxis_range=[0, 1.3], xaxis=dict(tickmode="linear"),
+                               margin=dict(t=60), **PLOTLY_LAYOUT)
     st.plotly_chart(fig_adstock, use_container_width=True)
 
     half_life = np.log(0.5) / np.log(decay + 1e-8)
@@ -200,8 +198,6 @@ with _c3:
 # ── Section 4: Weekly Contribution ────────────────────────────
 _m4, _c4 = st.columns([4, 1])
 with _m4:
-    st.subheader(f"Weekly Contribution — {selected}")
-
     model_df = st.session_state.get("model_df")
     if model_df is not None:
         weeks = model_df["week_start"]
@@ -212,7 +208,7 @@ with _m4:
     fig_contrib.add_trace(go.Scatter(x=weeks, y=contrib, fill="tozeroy",
                                       fillcolor="rgba(245, 133, 24, 0.2)", line=dict(color=ORANGE, width=2),
                                       name="Channel contribution to revenue"))
-    fig_contrib.update_layout(yaxis_title="Revenue Contribution", height=300, **PLOTLY_LAYOUT)
+    fig_contrib.update_layout(title=f"Weekly Contribution — {selected}", yaxis_title="Revenue Contribution", height=300, **PLOTLY_LAYOUT)
     st.plotly_chart(fig_contrib, use_container_width=True)
 
     with st.expander("Fitted Parameters"):

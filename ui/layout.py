@@ -122,15 +122,39 @@ def inject_global_css():
         font-size: 0.78rem !important;
     }
 
-    /* ── Metric cards: compact ── */
-    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {
-        font-size: 1.0rem !important;
+    /* ── Date inputs: match body font size ── */
+    [data-testid="stDateInput"] input,
+    [data-testid="stTextInput"] input,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] span,
+    [data-testid="stSelectbox"] input {
+        font-size: 0.82rem !important;
     }
-    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {
-        font-size: 0.7rem !important;
+
+    /* ── Metric cards: dark boxes, centered, uppercase labels ── */
+    [data-testid="stMetric"],
+    [data-testid="metric-container"] {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        padding: 14px 12px 12px 12px;
+        text-align: center;
+    }
+    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {
+        font-size: 1.15rem !important;
+        font-weight: 400 !important;
+        justify-content: center !important;
+    }
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p,
+    [data-testid="stMetricLabel"] div {
+        font-size: 0.62rem !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.08em !important;
+        font-weight: 300 !important;
+        justify-content: center !important;
     }
     [data-testid="stMetricDelta"], [data-testid="stMetricDelta"] div {
-        font-size: 0.68rem !important;
+        font-size: 0.65rem !important;
+        justify-content: center !important;
     }
 
     /* ── Tables/dataframes ── */

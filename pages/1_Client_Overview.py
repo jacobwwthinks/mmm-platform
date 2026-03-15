@@ -47,6 +47,7 @@ PLOTLY_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     font_color="#E6EDF3",
     font_family="Inter, sans-serif",
+    title_font=dict(size=13, color="#C9D1D9"),
 )
 ORANGE = "#F58518"
 TEAL = "#76B7B2"
@@ -358,8 +359,6 @@ with _c1:
 # ── Section 2: Weekly Spend + Spend Waterfall ─────────────────
 _m2, _c2 = st.columns([4, 1])
 with _m2:
-    st.subheader("Weekly Spend by Channel")
-
     if model_df is None:
         for base in [Path("."), Path(__file__).parent.parent]:
             mdf_path = base / "results" / selected_client / "model_df.pkl"
@@ -385,6 +384,7 @@ with _m2:
                     fillcolor=CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
                 ))
             fig_spend.update_layout(
+                title="Weekly Spend by Channel",
                 yaxis_title="Spend (SEK)",
                 height=400,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -396,8 +396,6 @@ with _m2:
             st.caption("No spend data available for build-up chart.")
     else:
         st.caption("Run the model to see spend build-up by channel.")
-
-    st.subheader("Marketing Spend by Channel")
 
     spend_waterfall_data = []
     if model_df is not None:
@@ -455,8 +453,6 @@ with _c2:
 # ── Section 3: Revenue Decomposition ─────────────────────────
 _m3, _c3 = st.columns([4, 1])
 with _m3:
-    st.subheader("Revenue Decomposition")
-
     contrib_df = results.channel_contributions
     total_rev = results.actual.sum()
     baseline_total = results.baseline_contribution.sum()
@@ -514,8 +510,6 @@ with _c3:
 # ── Section 4: Model Fit ─────────────────────────────────────
 _m4, _c4 = st.columns([4, 1])
 with _m4:
-    st.subheader("Actual vs. Model Predicted Revenue")
-
     if model_df is not None:
         weeks = model_df["week_start"]
     else:
@@ -525,6 +519,7 @@ with _m4:
     fig_ts.add_trace(go.Scatter(x=weeks, y=results.actual, name="Actual", line=dict(color=ORANGE, width=2)))
     fig_ts.add_trace(go.Scatter(x=weeks, y=results.predicted, name="Predicted", line=dict(color=TEAL, width=2, dash="dot")))
     fig_ts.update_layout(
+        title="Actual vs Model Predicted Revenue",
         yaxis_title="Revenue",
         height=350,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),

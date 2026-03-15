@@ -33,6 +33,7 @@ PLOTLY_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     font_color="#E6EDF3",
     font_family="Inter, sans-serif",
+    title_font=dict(size=13, color="#C9D1D9"),
 )
 
 inject_context_css()
