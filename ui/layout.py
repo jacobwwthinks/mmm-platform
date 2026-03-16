@@ -131,12 +131,29 @@ def inject_global_css():
     }
 
     /* ── Metric cards ── */
-    /* Force equal height for tiles in the same row */
+    /* Force equal height for tiles in the same row.
+       Streamlit wraps metrics in several layers of divs:
+       stHorizontalBlock > stColumn > div > div > ... > stMetric
+       We need flex to propagate through every level. */
     [data-testid="stHorizontalBlock"] {
         align-items: stretch !important;
     }
-    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] > div:first-child {
-        height: 100% !important;
+    [data-testid="stColumn"] {
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    [data-testid="stColumn"] > div {
+        flex: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    [data-testid="stColumn"] > div > div {
+        flex: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    [data-testid="stColumn"] > div > div > div {
+        flex: 1 !important;
         display: flex !important;
         flex-direction: column !important;
     }
