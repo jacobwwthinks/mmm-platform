@@ -138,7 +138,7 @@ def inject_global_css():
         border-radius: 8px;
         padding: 16px 16px 14px 16px;
         text-align: left;
-        min-height: 95px;
+        min-height: 110px;
     }
     [data-testid="stMetricLabel"],
     [data-testid="stMetricLabel"] * {
