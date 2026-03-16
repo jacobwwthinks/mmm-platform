@@ -149,8 +149,8 @@ def inject_global_css():
         text-align: left;
         flex: 1 !important;
     }
-    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p,
-    [data-testid="stMetricLabel"] div {
+    [data-testid="stMetricLabel"],
+    [data-testid="stMetricLabel"] * {
         font-size: 0.65rem !important;
         text-transform: uppercase !important;
         letter-spacing: 0.06em !important;
@@ -159,14 +159,16 @@ def inject_global_css():
         justify-content: flex-start !important;
         margin-bottom: 2px !important;
     }
-    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div {
+    [data-testid="stMetricValue"],
+    [data-testid="stMetricValue"] * {
         font-size: 1.5rem !important;
         font-weight: 600 !important;
         color: rgba(255, 255, 255, 0.92) !important;
         justify-content: flex-start !important;
         line-height: 1.2 !important;
     }
-    [data-testid="stMetricDelta"], [data-testid="stMetricDelta"] div {
+    [data-testid="stMetricDelta"],
+    [data-testid="stMetricDelta"] * {
         font-size: 0.7rem !important;
         justify-content: flex-start !important;
     }
