@@ -113,6 +113,33 @@ clients:
       orders_field: "order_count"
     events_csv: "events/redskapsbolaget_events.csv"
 
+  skinome:
+    display_name: "Skinome"
+    currency: "SEK"
+    channels:
+      meta:
+        windsor_connector: "facebook"
+        windsor_account: "179802513"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      google_ads:
+        windsor_connector: "google_ads"
+        windsor_account: "118-391-2529"
+        spend_field: "spend"
+        impressions_field: "impressions"
+    email_source:
+      windsor_connector: "klaviyo"
+      windsor_account: "RgvhTX"
+      opens_field: "opens"
+      clicks_field: "clicks"
+      revenue_field: "revenue"
+    revenue_source:
+      windsor_connector: "shopify"
+      windsor_account: null  # manual CSV upload
+      revenue_field: "order_total_price"
+      orders_field: "order_count"
+    events_csv: "events/skinome_events.csv"
+
 # Model defaults
 model:
   granularity: "weekly"  # weekly recommended for 2+ year datasets
