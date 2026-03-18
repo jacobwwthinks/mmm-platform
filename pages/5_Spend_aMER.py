@@ -487,6 +487,7 @@ with _m3:
         seasonal_multiplier=effective_mult,
         calibration_factor=cal_factor,
         yoy_growth_pct=yoy_growth,
+        max_spend_mult=5.0,
     )
 
     # Generate GP3 curve — start from 20% of current to avoid misleading S-curve region
