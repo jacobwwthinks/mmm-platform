@@ -536,38 +536,50 @@ with _m3:
     # Determine promo flag for the selected month
     sel_promo = 1 if (has_heavy_discount or has_light_discount) else 0
 
-    # Generate GP3 curve first, then find optimal FROM the curve.
+    # ── Benchmark-grounded recommendation ──
+    # Primary logic: same month last year + observed capacity trend
+    _hist = compute_historical_backcheck(results, model_df)
+    _cur_monthly = _hist["total_spend"].iloc[-1] if _hist is not None and len(_hist) > 0 else 0
+    _hist_max = _hist["total_spend"].max() if _hist is not None and len(_hist) > 0 else _cur_monthly
+
+    benchmark = compute_same_month_benchmark(model_df, sel_month, sel_year, yoy_growth_pct=0)
+    yoy_data = compute_observed_yoy_trend(model_df)
+
+    # Observed capacity growth from recent data
+    observed_growth_pct = 0.0
+    if yoy_data is not None:
+        observed_growth_pct = yoy_data.get("observed_capacity_growth_pct", 0.0)
+
+    # Recommended spend = same month last year × (1 + observed growth)
+    recommended_spend = None
+    benchmark_spend = None
+    benchmark_amer = None
+    if benchmark is not None and benchmark.get("latest_benchmark"):
+        bm = benchmark["latest_benchmark"]
+        benchmark_spend = bm["total_spend"]
+        benchmark_amer = bm["amer"]
+        years_gap = benchmark["years_gap"]
+        growth_mult = (1 + observed_growth_pct / 100) ** years_gap
+        recommended_spend = benchmark_spend * growth_mult
+
+    # Sweep range: centered on the recommendation, from 20% to 200%
+    _sweep_center = recommended_spend if recommended_spend else _cur_monthly
+    _sweep_center = max(_sweep_center, 10000)
+    _min_sweep = _sweep_center * 0.2
+    _max_sweep = _sweep_center * 3.0
+
+    # Generate GP3 curve for context
     if use_amer_model:
-        # ── New aMER model path ──
-        # Compute current monthly spend and historical max from data
-        _hist = compute_historical_backcheck(results, model_df)
-        _cur_monthly = _hist["total_spend"].iloc[-1] if _hist is not None and len(_hist) > 0 else 0
-        _hist_max = _hist["total_spend"].max() if _hist is not None and len(_hist) > 0 else _cur_monthly
-
-        # Constrain sweep to 2× historical max — beyond that the model
-        # is extrapolating and unreliable. The optimal must be within
-        # a range the brand has some basis for achieving.
-        _max_sweep = max(_hist_max * 2, _cur_monthly * 3, 50000)
-
         gp3_df = compute_gp3_curve(
             gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
             amer_coefficients=amer_coefficients,
             month=sel_month, promo=sel_promo,
             revenue_adjustment_factor=revenue_adjustment_factor,
             n_points=200,
+            min_monthly_spend=_min_sweep,
             max_monthly_spend=_max_sweep,
         )
-
-        optimal = find_optimal_spend(
-            results=results, gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
-            amer_coefficients=amer_coefficients,
-            month=sel_month, promo=sel_promo,
-            revenue_adjustment_factor=revenue_adjustment_factor,
-            current_monthly_spend=_cur_monthly,
-            gp3_curve_df=gp3_df,
-        )
     else:
-        # ── Legacy MMM-derived path (fallback) ──
         gp3_df = compute_gp3_curve(
             results, gm2_pct, cltv_expansion,
             organic_weekly_revenue=organic_weekly,
@@ -575,13 +587,42 @@ with _m3:
             calibration_factor=cal_factor,
             n_points=200, max_spend_mult=5.0,
         )
-        optimal = find_optimal_spend(
-            results, gm2_pct, cltv_expansion,
-            organic_weekly_revenue=organic_weekly,
-            seasonal_multiplier=effective_mult,
-            calibration_factor=cal_factor,
-            max_spend_mult=5.0, gp3_curve_df=gp3_df,
-        )
+
+    # Find the GP3 curve peak (for the star marker)
+    optimal = find_optimal_spend(
+        results=results, gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
+        amer_coefficients=amer_coefficients if use_amer_model else None,
+        month=sel_month if use_amer_model else None,
+        promo=sel_promo,
+        revenue_adjustment_factor=revenue_adjustment_factor,
+        current_monthly_spend=_cur_monthly,
+        gp3_curve_df=gp3_df,
+        organic_weekly_revenue=organic_weekly,
+        seasonal_multiplier=effective_mult,
+        calibration_factor=cal_factor,
+    )
+
+    # Override recommended spend with benchmark-grounded value
+    if recommended_spend is not None:
+        # Look up GP3 at the benchmark-recommended spend level
+        rec_idx = (gp3_df["monthly_spend"] - recommended_spend).abs().idxmin()
+        rec_row = gp3_df.loc[rec_idx]
+        optimal["recommended_monthly_spend"] = recommended_spend
+        optimal["recommended_gp3_365d_monthly"] = rec_row["gp3_365d_monthly"]
+        optimal["recommended_amer"] = rec_row["amer"]
+        optimal["recommended_revenue_monthly"] = rec_row["total_new_customer_revenue"]
+        optimal["benchmark_spend"] = benchmark_spend
+        optimal["benchmark_amer"] = benchmark_amer
+        optimal["observed_growth_pct"] = observed_growth_pct
+    else:
+        # No benchmark available — fall back to curve peak
+        optimal["recommended_monthly_spend"] = optimal["optimal_monthly_spend"]
+        optimal["recommended_gp3_365d_monthly"] = optimal["optimal_gp3_365d_monthly"]
+        optimal["recommended_amer"] = optimal["amer_at_optimal"]
+        optimal["recommended_revenue_monthly"] = optimal.get("new_customer_revenue_monthly", 0)
+        optimal["benchmark_spend"] = None
+        optimal["benchmark_amer"] = None
+        optimal["observed_growth_pct"] = 0
 
     # Clip to actionable range (from 20% of current spend onward)
     min_actionable = optimal["current_monthly_spend"] * 0.2
@@ -628,23 +669,23 @@ with _m3:
         secondary_y=True,
     )
 
-    # Mark optimal
+    # Mark recommended spend (benchmark-grounded)
     fig.add_trace(
         go.Scatter(
-            x=[optimal["optimal_monthly_spend"]],
-            y=[optimal["optimal_gp3_365d_monthly"]],
+            x=[optimal["recommended_monthly_spend"]],
+            y=[optimal["recommended_gp3_365d_monthly"]],
             mode="markers+text",
             marker=dict(size=14, color=ORANGE, symbol="star"),
-            text=[f"Optimal: {optimal['optimal_monthly_spend']:,.0f}"],
+            text=[f"Recommended: {optimal['recommended_monthly_spend']:,.0f}"],
             textposition="top right",
             textfont=dict(color=ORANGE, size=12),
-            name="Optimal",
+            name="Recommended",
             showlegend=False,
         ),
         secondary_y=False,
     )
 
-    # Mark current
+    # Mark current spend
     fig.add_trace(
         go.Scatter(
             x=[optimal["current_monthly_spend"]],
@@ -659,6 +700,25 @@ with _m3:
         ),
         secondary_y=False,
     )
+
+    # Mark benchmark (same month last year) if available
+    if optimal.get("benchmark_spend"):
+        bm_idx = (gp3_df["monthly_spend"] - optimal["benchmark_spend"]).abs().idxmin()
+        bm_gp3 = gp3_df.loc[bm_idx, "gp3_365d_monthly"]
+        fig.add_trace(
+            go.Scatter(
+                x=[optimal["benchmark_spend"]],
+                y=[bm_gp3],
+                mode="markers+text",
+                marker=dict(size=10, color="#9C755F", symbol="diamond"),
+                text=[f"Last year: {optimal['benchmark_spend']:,.0f}"],
+                textposition="bottom right",
+                textfont=dict(color="#9C755F", size=10),
+                name="Last year",
+                showlegend=False,
+            ),
+            secondary_y=False,
+        )
 
     fig.add_hline(
         y=0, line_dash="dash", line_color="rgba(225, 87, 89, 0.4)",
@@ -692,34 +752,45 @@ with _m3:
 
     col1, col2, col3, col4 = st.columns(4)
 
-    spend_change = optimal["spend_change_pct"]
+    rec_spend = optimal["recommended_monthly_spend"]
+    growth_label = ""
+    if optimal.get("benchmark_spend") and optimal["benchmark_spend"] > 0:
+        pct_vs_ly = (rec_spend - optimal["benchmark_spend"]) / optimal["benchmark_spend"] * 100
+        growth_label = f"{pct_vs_ly:+.0f}% vs last year"
+    else:
+        spend_change = optimal["spend_change_pct"]
+        growth_label = f"{spend_change:+.0f}% vs avg"
 
     with col1:
         st.metric(
             "Recommended spend",
-            f"{optimal['optimal_monthly_spend']:,.0f}",
-            f"{spend_change:+.0f}% vs avg",
+            f"{rec_spend:,.0f}",
+            growth_label,
         )
 
     with col2:
-        st.metric("GP3 (first order)", f"{optimal['optimal_gp3_first_order_monthly']:,.0f}")
+        st.metric("GP3 (365D)", f"{optimal['recommended_gp3_365d_monthly']:,.0f}")
 
     with col3:
-        st.metric("GP3 (365D)", f"{optimal['optimal_gp3_365d_monthly']:,.0f}")
+        rec_amer = optimal["recommended_amer"]
+        if rec_amer > 100 or rec_spend < 100:
+            st.metric("aMER at recommended", "N/A")
+        else:
+            st.metric("aMER at recommended", f"{rec_amer:.2f}x")
 
     with col4:
-        amer_display = optimal["amer_at_optimal"]
-        if amer_display > 100 or optimal["optimal_monthly_spend"] < 100:
-            st.metric("aMER", "N/A")
+        if optimal.get("benchmark_amer"):
+            st.metric("aMER last year", f"{optimal['benchmark_amer']:.2f}x")
         else:
-            st.metric("aMER", f"{amer_display:.2f}x")
+            st.metric("aMER (current)", f"{optimal['current_amer']:.2f}x")
 
-    if optimal.get("at_upper_bound", False):
-        st.warning(
-            "**Recommendation hit the search boundary.** The model suggests GP3 is still "
-            "positive at the maximum spend level explored. This likely means the model is "
-            "extrapolating beyond observed data — treat the exact number with caution and "
-            "scale up gradually rather than jumping to this level."
+    # Explain the recommendation basis
+    if optimal.get("benchmark_spend"):
+        obs_g = optimal["observed_growth_pct"]
+        st.caption(
+            f"Based on {sel_label.split()[0]} last year "
+            f"({optimal['benchmark_spend']:,.0f} SEK at {optimal['benchmark_amer']:.2f}x aMER) "
+            f"+ observed capacity growth of {obs_g:+.0f}%."
         )
 
 with _c3:
