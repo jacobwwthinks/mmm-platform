@@ -539,16 +539,24 @@ with _m3:
     # Generate GP3 curve first, then find optimal FROM the curve.
     if use_amer_model:
         # ── New aMER model path ──
+        # Compute current monthly spend and historical max from data
+        _hist = compute_historical_backcheck(results, model_df)
+        _cur_monthly = _hist["total_spend"].iloc[-1] if _hist is not None and len(_hist) > 0 else 0
+        _hist_max = _hist["total_spend"].max() if _hist is not None and len(_hist) > 0 else _cur_monthly
+
+        # Constrain sweep to 2× historical max — beyond that the model
+        # is extrapolating and unreliable. The optimal must be within
+        # a range the brand has some basis for achieving.
+        _max_sweep = max(_hist_max * 2, _cur_monthly * 3, 50000)
+
         gp3_df = compute_gp3_curve(
             gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
             amer_coefficients=amer_coefficients,
             month=sel_month, promo=sel_promo,
             revenue_adjustment_factor=revenue_adjustment_factor,
             n_points=200,
+            max_monthly_spend=_max_sweep,
         )
-        # Compute current monthly spend from historical data
-        _hist = compute_historical_backcheck(results, model_df)
-        _cur_monthly = _hist["total_spend"].iloc[-1] if _hist is not None and len(_hist) > 0 else 0
 
         optimal = find_optimal_spend(
             results=results, gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
@@ -670,6 +678,15 @@ with _m3:
     fig.update_yaxes(title_text="New customer net sales (SEK/month)", secondary_y=True)
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── Warning if optimal is at the sweep boundary ──
+    if optimal.get("at_upper_bound"):
+        st.warning(
+            "**Optimal is at the sweep boundary** — the model suggests spending beyond "
+            "the range we trust. The recommendation shown is the maximum of the "
+            "constrained range (2× historical max). The true optimum may be higher "
+            "but is outside the model's reliable extrapolation range."
+        )
 
     # ── Summary cards for this month ──
 

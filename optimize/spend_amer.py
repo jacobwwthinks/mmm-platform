@@ -313,10 +313,10 @@ def compute_gp3_curve(
             trend_index = amer_coefficients.get("trend_index_max", 0)
 
         if max_monthly_spend is None:
-            # Default range: mean aMER × mean spend gives ballpark;
-            # sweep from 10k to 5× the spend where aMER model was trained
-            mean_amer = amer_coefficients.get("mean_amer_observed", 2.0)
-            max_monthly_spend = max(min_monthly_spend * 20, 3000000)
+            # Constrain sweep to a realistic range grounded in observed data.
+            # The aMER model is only reliable within ~2× the historical range.
+            # Beyond that, the log-linear extrapolation is unreliable.
+            max_monthly_spend = min_monthly_spend * 10  # fallback
 
         spend_levels = np.linspace(min_monthly_spend, max_monthly_spend, n_points)
 
