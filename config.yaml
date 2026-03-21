@@ -140,6 +140,38 @@ clients:
       orders_field: "order_count"
     events_csv: "events/skinome_events.csv"
 
+  switch_nails:
+    display_name: "Switch Nails"
+    currency: "SEK"
+    channels:
+      meta:
+        windsor_connector: "facebook"
+        windsor_account: "1257003074943028"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      google_ads:
+        windsor_connector: "google_ads"
+        windsor_account: "846-666-7389"
+        spend_field: "spend"
+        impressions_field: "impressions"
+      pinterest:
+        windsor_connector: "pinterest"
+        windsor_account: "549767483165"
+        spend_field: "spend"
+        impressions_field: "impressions"
+    email_source:
+      windsor_connector: "klaviyo"
+      windsor_account: "YawNu8"
+      opens_field: "opens"
+      clicks_field: "clicks"
+      revenue_field: "revenue"
+    revenue_source:
+      windsor_connector: "shopify"
+      windsor_account: "switch-nails.myshopify.com"
+      revenue_field: "order_total_price"
+      orders_field: "order_count"
+    events_csv: "events/switch_nails_events.csv"
+
 # Model defaults
 model:
   granularity: "weekly"  # weekly recommended for 2+ year datasets

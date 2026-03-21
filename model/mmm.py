@@ -180,6 +180,19 @@ class MMMResults:
             with open(f"{path}/model_df.pkl", "wb") as f:
                 pickle.dump(model_df, f)
             logger.info(f"Model DataFrame saved ({len(model_df)} rows)")
+
+            # Auto-train aMER model from the same data
+            try:
+                from optimize.amer_model import fit_amer_model, save_amer_coefficients
+                coefficients = fit_amer_model(model_df)
+                save_amer_coefficients(coefficients, path)
+                logger.info(
+                    f"aMER model trained: R²={coefficients['r_squared']:.3f}, "
+                    f"{coefficients['n_observations']} months"
+                )
+            except Exception as e:
+                logger.warning(f"Could not auto-train aMER model: {e}")
+
         logger.info(f"Results saved to {path}/")
 
     @classmethod

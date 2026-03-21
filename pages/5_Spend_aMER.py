@@ -46,6 +46,7 @@ from optimize.spend_amer import (
     compute_observed_yoy_trend,
     optimize_channel_allocation,
 )
+from optimize.amer_model import load_amer_coefficients, fit_amer_model, save_amer_coefficients
 from ui.layout import inject_context_css, render_sidebar, context_block, context_tip, context_separator
 
 PLOTLY_LAYOUT = dict(
@@ -128,6 +129,22 @@ if model_df is None and results_dir is not None:
     if model_df is not None:
         st.session_state["model_df"] = model_df
 
+# Load aMER coefficients (new two-step model)
+amer_coefficients = None
+if results_dir is not None:
+    amer_coefficients = load_amer_coefficients(str(results_dir))
+
+# If no coefficients exist but we have model_df, train now
+if amer_coefficients is None and model_df is not None:
+    try:
+        amer_coefficients = fit_amer_model(model_df)
+        if results_dir is not None:
+            save_amer_coefficients(amer_coefficients, str(results_dir))
+    except Exception as e:
+        st.warning(f"Could not train aMER model: {e}")
+
+use_amer_model = amer_coefficients is not None
+
 # Load events
 events_path = client_cfg.get("events_csv", "")
 events_df = None
@@ -188,24 +205,61 @@ _m1, _c1 = st.columns([4, 1])
 
 with _m1:
 
-    # ── Model calibration diagnostic ──────────────────────────
-    if calibration["status"] == "ok" and abs(cal_factor - 1.0) > 0.1:
-        cal_pred = calibration["predicted_weekly_channel_rev"]
-        cal_actual = calibration["actual_weekly_channel_contrib"]
-        if cal_factor > 1.05:
-            st.info(
-                f"**Model calibration applied ({cal_factor:.2f}x)**\n\n"
-                f"The model's saturation curves predict **{cal_pred:,.0f} SEK/wk** in channel revenue "
-                f"at historical spend, but the model's own decomposition shows **{cal_actual:,.0f} SEK/wk**. "
-                f"A {cal_factor:.2f}x calibration factor is applied to correct the level while preserving "
-                f"the saturation curve shape (diminishing returns)."
+    # ── aMER model diagnostic ──────────────────────────────────
+    if use_amer_model:
+        with st.expander("aMER Model — Two-Step Calibrated OLS", expanded=False):
+            ac = amer_coefficients
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                st.metric("R²", f"{ac['r_squared']:.3f}")
+            with d2:
+                st.metric("Training months", ac["n_observations"])
+            with d3:
+                st.metric("Elasticity pairs", ac["elasticity_n_pairs"])
+
+            st.caption(f"Training period: {ac['training_period']}")
+            st.caption(f"β_log_spend = {ac['beta_log_spend']:.4f} "
+                       f"({'default' if ac.get('elasticity_used_default') else 'data-driven'})")
+            st.caption(f"β_trend = {ac['beta_trend']:.4f}, β_promo = {ac['beta_promo']:.4f}")
+
+            # Month dummies table
+            md = ac["month_dummies"]
+            months_names = ["Feb", "Mar", "Apr", "May", "Jun", "Jul",
+                           "Aug", "Sep", "Oct", "Nov", "Dec"]
+            month_vals = [md.get(str(m), 0) for m in range(2, 13)]
+            st.dataframe(
+                pd.DataFrame({"Month": ["Jan"] + months_names,
+                              "Coefficient": [0.0] + month_vals}),
+                hide_index=True, use_container_width=True,
             )
-        elif cal_factor < 0.95:
-            st.info(
-                f"**Model calibration applied ({cal_factor:.2f}x)**\n\n"
-                f"The optimizer over-predicts channel revenue vs the model's decomposition. "
-                f"A {cal_factor:.2f}x correction is applied."
-            )
+
+            if st.button("Re-train aMER model", key="retrain_amer"):
+                try:
+                    new_coeffs = fit_amer_model(model_df)
+                    save_amer_coefficients(new_coeffs, str(results_dir))
+                    st.success(f"Re-trained: R²={new_coeffs['r_squared']:.3f}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Training failed: {e}")
+    else:
+        # Legacy calibration diagnostic
+        if calibration["status"] == "ok" and abs(cal_factor - 1.0) > 0.1:
+            cal_pred = calibration["predicted_weekly_channel_rev"]
+            cal_actual = calibration["actual_weekly_channel_contrib"]
+            if cal_factor > 1.05:
+                st.info(
+                    f"**Model calibration applied ({cal_factor:.2f}x)**\n\n"
+                    f"The model's saturation curves predict **{cal_pred:,.0f} SEK/wk** in channel revenue "
+                    f"at historical spend, but the model's own decomposition shows **{cal_actual:,.0f} SEK/wk**. "
+                    f"A {cal_factor:.2f}x calibration factor is applied to correct the level while preserving "
+                    f"the saturation curve shape (diminishing returns)."
+                )
+            elif cal_factor < 0.95:
+                st.info(
+                    f"**Model calibration applied ({cal_factor:.2f}x)**\n\n"
+                    f"The optimizer over-predicts channel revenue vs the model's decomposition. "
+                    f"A {cal_factor:.2f}x correction is applied."
+                )
 
     if _months_missing_events:
         st.error(
@@ -251,23 +305,22 @@ with _m1:
         )
 
     with col3:
-        # Compute observed YoY trend from data
-        yoy_trend = compute_observed_yoy_trend(model_df)
-        observed_growth_label = ""
-        if yoy_trend is not None:
-            obs = yoy_trend["observed_capacity_growth_pct"]
-            observed_growth_label = f" (observed: {obs:+.0f}%)"
-
-        yoy_growth = st.number_input(
-            "YoY spend capacity growth %",
-            min_value=-50.0,
-            max_value=100.0,
+        return_rate_pct = st.number_input(
+            "Return rate %",
+            min_value=0.0,
+            max_value=50.0,
             value=0.0,
-            step=5.0,
-            help="How much more you expect to be able to spend at the same aMER vs last year. "
-                 "0% = assume same spend capacity as last year. "
-                 "Set based on brand growth trajectory.",
+            step=1.0,
+            help="Percentage of revenue lost to returns. "
+                 "Revenue Adjustment Factor = 1 - return rate. "
+                 "E.g., 6% returns means 94% of NC revenue is retained.",
         )
+
+    revenue_adjustment_factor = 1 - return_rate_pct / 100
+
+    # Still compute YoY trend for display purposes
+    yoy_trend = compute_observed_yoy_trend(model_df)
+    yoy_growth = 0.0  # kept for backward compatibility in benchmark display
 
     cltv_mult = 1 + cltv_expansion / 100
     gm2_frac = gm2_pct / 100
@@ -480,30 +533,51 @@ with _m3:
     st.markdown("---")
     st.markdown(f"#### GP3 Curve — {sel_label}")
 
-    # Generate GP3 curve first, then find optimal FROM the curve.
-    # This guarantees the optimal marker sits at the visible peak.
-    gp3_df = compute_gp3_curve(
-        results, gm2_pct, cltv_expansion,
-        organic_weekly_revenue=organic_weekly,
-        seasonal_multiplier=effective_mult,
-        calibration_factor=cal_factor,
-        n_points=200,
-        max_spend_mult=5.0,
-    )
+    # Determine promo flag for the selected month
+    sel_promo = 1 if (has_heavy_discount or has_light_discount) else 0
 
-    # Find optimal by picking the peak of the curve (numerical sweep)
-    optimal = find_optimal_spend(
-        results, gm2_pct, cltv_expansion,
-        organic_weekly_revenue=organic_weekly,
-        seasonal_multiplier=effective_mult,
-        calibration_factor=cal_factor,
-        max_spend_mult=5.0,
-        gp3_curve_df=gp3_df,
-    )
+    # Generate GP3 curve first, then find optimal FROM the curve.
+    if use_amer_model:
+        # ── New aMER model path ──
+        gp3_df = compute_gp3_curve(
+            gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
+            amer_coefficients=amer_coefficients,
+            month=sel_month, promo=sel_promo,
+            revenue_adjustment_factor=revenue_adjustment_factor,
+            n_points=200,
+        )
+        # Compute current monthly spend from historical data
+        _hist = compute_historical_backcheck(results, model_df)
+        _cur_monthly = _hist["total_spend"].iloc[-1] if _hist is not None and len(_hist) > 0 else 0
+
+        optimal = find_optimal_spend(
+            results=results, gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
+            amer_coefficients=amer_coefficients,
+            month=sel_month, promo=sel_promo,
+            revenue_adjustment_factor=revenue_adjustment_factor,
+            current_monthly_spend=_cur_monthly,
+            gp3_curve_df=gp3_df,
+        )
+    else:
+        # ── Legacy MMM-derived path (fallback) ──
+        gp3_df = compute_gp3_curve(
+            results, gm2_pct, cltv_expansion,
+            organic_weekly_revenue=organic_weekly,
+            seasonal_multiplier=effective_mult,
+            calibration_factor=cal_factor,
+            n_points=200, max_spend_mult=5.0,
+        )
+        optimal = find_optimal_spend(
+            results, gm2_pct, cltv_expansion,
+            organic_weekly_revenue=organic_weekly,
+            seasonal_multiplier=effective_mult,
+            calibration_factor=cal_factor,
+            max_spend_mult=5.0, gp3_curve_df=gp3_df,
+        )
 
     # Clip to actionable range (from 20% of current spend onward)
-    min_actionable = optimal["current_weekly_spend"] * 0.2
-    gp3_plot = gp3_df[gp3_df["weekly_spend"] >= min_actionable].copy()
+    min_actionable = optimal["current_monthly_spend"] * 0.2
+    gp3_plot = gp3_df[gp3_df["monthly_spend"] >= min_actionable].copy()
 
     # ── Dual-axis chart ──
 
@@ -531,10 +605,15 @@ with _m3:
         secondary_y=False,
     )
 
+    # NC net sales — in aMER model mode values are already monthly;
+    # in legacy mode they are weekly and need × 4.33
+    nc_monthly = gp3_plot["total_new_customer_revenue"]
+    if not use_amer_model:
+        nc_monthly = nc_monthly * 4.33
     fig.add_trace(
         go.Scatter(
             x=gp3_plot["monthly_spend"],
-            y=gp3_plot["total_new_customer_revenue"] * 4.33,
+            y=nc_monthly,
             name="NC net sales",
             line=dict(color=TEAL, width=2, dash="dot"),
         ),
@@ -869,12 +948,24 @@ with _m6:
                         e_boost *= drop_mult
 
             eff = s_mult * e_boost
-            opt = find_optimal_spend(
-                results, gm2_pct, cltv_expansion,
-                organic_weekly_revenue=o_weekly,
-                seasonal_multiplier=eff,
-                calibration_factor=cal_factor,
-            )
+            # Determine promo for this overview month
+            m_promo = 1 if e_boost > 1.0 else 0
+
+            if use_amer_model:
+                opt = find_optimal_spend(
+                    results=results, gm2_pct=gm2_pct, cltv_expansion_pct=cltv_expansion,
+                    amer_coefficients=amer_coefficients,
+                    month=m_num, promo=m_promo,
+                    revenue_adjustment_factor=revenue_adjustment_factor,
+                    current_monthly_spend=_cur_monthly if '_cur_monthly' in dir() else 0,
+                )
+            else:
+                opt = find_optimal_spend(
+                    results, gm2_pct, cltv_expansion,
+                    organic_weekly_revenue=o_weekly,
+                    seasonal_multiplier=eff,
+                    calibration_factor=cal_factor,
+                )
             overview_rows.append({
                 "month": mo["date"].strftime("%b %Y"),
                 "status": "Projected",

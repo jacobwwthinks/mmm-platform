@@ -271,42 +271,99 @@ def _derive_amer_curve(
 # ═══════════════════════════════════════════════════════════════
 
 def compute_gp3_curve(
-    results: MMMResults,
-    gm2_pct: float,
-    cltv_expansion_pct: float,
+    results: MMMResults = None,
+    gm2_pct: float = 50.0,
+    cltv_expansion_pct: float = 30.0,
     organic_weekly_revenue: float = 0,
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
     n_points: int = 150,
     max_spend_mult: float = 5.0,
     min_amer_floor: float = 0.3,
+    # ── New aMER model parameters (take precedence if provided) ──
+    amer_coefficients: dict = None,
+    month: int = None,
+    promo: int = 0,
+    trend_index: int = None,
+    revenue_adjustment_factor: float = 1.0,
+    min_monthly_spend: float = 10000,
+    max_monthly_spend: float = None,
 ) -> pd.DataFrame:
     """
-    Compute GP3 at various spend levels using the aMER model.
+    Compute GP3 at various spend levels.
 
-    Derives aMER = intercept + β × ln(spend) from the MMM curves,
-    then sweeps spend levels computing:
+    Two modes:
+    1. **aMER coefficients mode** (preferred): Uses the two-step calibrated OLS
+       model from optimize/amer_model.py. Requires amer_coefficients + month.
+       Spend sweep is in MONTHLY units.
 
-        nrev = aMER × spend
-        GP3_FO = nrev × GM2% − spend
-        GP3_365D = nrev × LTV × GM2% − spend
-
-    This produces clean, well-behaved curves:
-    - aMER monotonically decreasing
-    - NC net sales concave and increasing
-    - GP3 has exactly one clear peak (proper parabola shape)
+    2. **Legacy MMM mode** (fallback): Derives aMER from MMM saturation curves.
+       Used when amer_coefficients is not provided.
 
     Returns DataFrame with spend, revenue, GP3 (first order + 365D), and aMER.
     """
+    cltv_mult = 1 + cltv_expansion_pct / 100
+    gm2_frac = gm2_pct / 100
+
+    # ── aMER coefficients mode (new) ──
+    if amer_coefficients is not None and month is not None:
+        from optimize.amer_model import predict_amer
+
+        if trend_index is None:
+            trend_index = amer_coefficients.get("trend_index_max", 0)
+
+        if max_monthly_spend is None:
+            # Default range: mean aMER × mean spend gives ballpark;
+            # sweep from 10k to 5× the spend where aMER model was trained
+            mean_amer = amer_coefficients.get("mean_amer_observed", 2.0)
+            max_monthly_spend = max(min_monthly_spend * 20, 3000000)
+
+        spend_levels = np.linspace(min_monthly_spend, max_monthly_spend, n_points)
+
+        rows = []
+        for monthly_spend in spend_levels:
+            amer = predict_amer(
+                amer_coefficients, monthly_spend, month, promo,
+                trend_index, min_amer_floor,
+            )
+            nrev = amer * monthly_spend * revenue_adjustment_factor
+            rev_365d = nrev * cltv_mult
+            gp3_fo = nrev * gm2_frac - monthly_spend
+            gp3_365d = rev_365d * gm2_frac - monthly_spend
+
+            rows.append({
+                "monthly_spend": monthly_spend,
+                "weekly_spend": monthly_spend / 4.33,
+                "total_new_customer_revenue": nrev,
+                "paid_new_customer_revenue": nrev,
+                "revenue_365d": rev_365d,
+                "gp3_first_order": gp3_fo,
+                "gp3_first_order_monthly": gp3_fo,
+                "gp3_365d": gp3_365d,
+                "gp3_365d_monthly": gp3_365d,
+                "amer": amer,
+            })
+
+        df = pd.DataFrame(rows)
+        if len(df) > 1:
+            df["marginal_roas"] = np.gradient(
+                df["total_new_customer_revenue"].values,
+                df["monthly_spend"].values,
+            )
+        else:
+            df["marginal_roas"] = 0
+        return df
+
+    # ── Legacy MMM-derived mode (fallback) ──
+    if results is None:
+        raise ValueError("Either amer_coefficients or results must be provided")
+
     curve = _derive_amer_curve(
         results, organic_weekly_revenue, seasonal_multiplier, calibration_factor,
     )
     intercept = curve["intercept"]
     beta = curve["beta_log_spend"]
     current_total = curve["current_total"]
-
-    cltv_mult = 1 + cltv_expansion_pct / 100
-    gm2_frac = gm2_pct / 100
 
     min_spend = max(current_total * 0.05, 100)
     max_spend = max(current_total * max_spend_mult, min_spend * 2)
@@ -335,16 +392,13 @@ def compute_gp3_curve(
         })
 
     df = pd.DataFrame(rows)
-
     if len(df) > 1:
-        d_rev = np.gradient(
+        df["marginal_roas"] = np.gradient(
             df["total_new_customer_revenue"].values,
             df["weekly_spend"].values,
         )
-        df["marginal_roas"] = d_rev
     else:
         df["marginal_roas"] = 0
-
     return df
 
 
@@ -353,41 +407,49 @@ def compute_gp3_curve(
 # ═══════════════════════════════════════════════════════════════
 
 def find_optimal_spend(
-    results: MMMResults,
-    gm2_pct: float,
-    cltv_expansion_pct: float,
+    results: MMMResults = None,
+    gm2_pct: float = 50.0,
+    cltv_expansion_pct: float = 30.0,
     organic_weekly_revenue: float = 0,
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
     max_spend_mult: float = 5.0,
     min_amer_floor: float = 0.3,
     gp3_curve_df: pd.DataFrame = None,
+    # ── New aMER model parameters ──
+    amer_coefficients: dict = None,
+    month: int = None,
+    promo: int = 0,
+    trend_index: int = None,
+    revenue_adjustment_factor: float = 1.0,
+    current_monthly_spend: float = None,
 ) -> dict:
     """
     Find the spend level that maximises 365-day GP3.
 
-    Uses a numerical sweep (matching the DTC Forecast Tool approach from
-    Section 10.2): compute GP3 at every spend level in the curve DataFrame
-    and pick the row with the highest GP3_365D.
+    Uses a numerical sweep: compute GP3 at every spend level and pick the
+    row with the highest GP3_365D. Guarantees the optimal marker sits at
+    the visible peak of the plotted curve.
 
-    This guarantees the optimal marker always sits at the visible peak
-    of the plotted curve — no analytical/numerical divergence.
+    Supports two modes:
+    1. aMER coefficients (preferred): pass amer_coefficients + month
+    2. Legacy MMM-derived (fallback): pass results
 
-    If gp3_curve_df is not provided, computes one internally.
-
-    Returns dict with optimal spend, GP3 (both first-order and 365D),
-    both breakeven aMER thresholds, channel allocation, and current comparison.
+    If gp3_curve_df is provided, finds the peak from that DataFrame directly.
     """
     # ── Build the GP3 curve if not provided ──
     if gp3_curve_df is None:
         gp3_curve_df = compute_gp3_curve(
-            results, gm2_pct, cltv_expansion_pct,
+            results=results, gm2_pct=gm2_pct,
+            cltv_expansion_pct=cltv_expansion_pct,
             organic_weekly_revenue=organic_weekly_revenue,
             seasonal_multiplier=seasonal_multiplier,
             calibration_factor=calibration_factor,
-            n_points=200,
-            max_spend_mult=max_spend_mult,
+            n_points=200, max_spend_mult=max_spend_mult,
             min_amer_floor=min_amer_floor,
+            amer_coefficients=amer_coefficients,
+            month=month, promo=promo, trend_index=trend_index,
+            revenue_adjustment_factor=revenue_adjustment_factor,
         )
 
     df = gp3_curve_df
@@ -397,19 +459,9 @@ def find_optimal_spend(
         logger.warning("GP3 curve is empty, cannot find optimal")
         optimal_idx = 0
     else:
-        optimal_idx = df["gp3_365d"].idxmax()
+        optimal_idx = df["gp3_365d_monthly"].idxmax()
 
     opt_row = df.loc[optimal_idx]
-    optimal_spend = opt_row["weekly_spend"]
-
-    # ── Current spend (from MMM training data) ──
-    curve_info = _derive_amer_curve(
-        results, organic_weekly_revenue, seasonal_multiplier, calibration_factor,
-    )
-    current_total = curve_info["current_total"]
-    alloc_ratios = curve_info["alloc_ratios"]
-    channels = curve_info["channels"]
-    adstock_means = curve_info["adstock_means"]
 
     cltv_mult = 1 + cltv_expansion_pct / 100
     gm2_frac = gm2_pct / 100
@@ -418,61 +470,87 @@ def find_optimal_spend(
     breakeven_amer_365d = 1 / K
 
     # Check if optimal is at the upper bound of the sweep
-    max_spend = df["weekly_spend"].max()
-    at_upper_bound = optimal_spend >= max_spend * 0.95
+    max_spend = df["monthly_spend"].max()
+    at_upper_bound = opt_row["monthly_spend"] >= max_spend * 0.95
 
     # ── Metrics at optimal (read directly from the curve) ──
     opt_rev = opt_row["total_new_customer_revenue"]
-    opt_gp3_fo = opt_row["gp3_first_order"]
-    opt_gp3_365d = opt_row["gp3_365d"]
+    opt_gp3_fo = opt_row["gp3_first_order_monthly"]
+    opt_gp3_365d = opt_row["gp3_365d_monthly"]
     opt_amer = opt_row["amer"]
 
+    # ── Current spend ──
+    if current_monthly_spend is not None:
+        cur_monthly = current_monthly_spend
+    elif results is not None:
+        # Derive from MMM training data
+        curve_info = _derive_amer_curve(
+            results, organic_weekly_revenue, seasonal_multiplier, calibration_factor,
+        )
+        cur_monthly = curve_info["current_total"] * 4.33
+    else:
+        cur_monthly = df["monthly_spend"].iloc[0]
+
     # ── Metrics at current spend (interpolate from curve) ──
-    cur_idx = (df["weekly_spend"] - current_total).abs().idxmin()
+    cur_idx = (df["monthly_spend"] - cur_monthly).abs().idxmin()
     cur_row = df.loc[cur_idx]
     cur_rev = cur_row["total_new_customer_revenue"]
-    cur_gp3_fo = cur_row["gp3_first_order"]
-    cur_gp3_365d = cur_row["gp3_365d"]
+    cur_gp3_fo = cur_row["gp3_first_order_monthly"]
+    cur_gp3_365d = cur_row["gp3_365d_monthly"]
     cur_amer = cur_row["amer"]
 
-    # Marginal aMER at optimal (from curve's marginal_roas column)
+    # Marginal aMER at optimal
     marginal_amer = opt_row.get("marginal_roas", 0)
 
-    # Channel allocation at optimal spend (from MMM predictions)
-    params = results.channel_params
+    # Channel allocation at optimal spend (from MMM if available)
     channel_allocation = {}
-    for ch in channels:
-        ch_spend = optimal_spend * alloc_ratios.get(ch, 1 / len(channels))
-        ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
-        ch_rev_cal = ch_rev * calibration_factor * seasonal_multiplier
-        channel_allocation[ch] = {
-            "weekly_spend": ch_spend,
-            "monthly_spend": ch_spend * 4.33,
-            "weekly_revenue": ch_rev_cal,
-        }
+    if results is not None:
+        try:
+            curve_info = _derive_amer_curve(
+                results, organic_weekly_revenue, seasonal_multiplier, calibration_factor,
+            )
+            alloc_ratios = curve_info["alloc_ratios"]
+            channels = curve_info["channels"]
+            adstock_means = curve_info["adstock_means"]
+            params = results.channel_params
+            opt_weekly = opt_row["monthly_spend"] / 4.33
+            for ch in channels:
+                ch_spend = opt_weekly * alloc_ratios.get(ch, 1 / len(channels))
+                ch_rev = predict_channel_revenue(ch_spend, params[ch], adstock_means[ch])
+                ch_rev_cal = ch_rev * calibration_factor * seasonal_multiplier
+                channel_allocation[ch] = {
+                    "weekly_spend": ch_spend,
+                    "monthly_spend": ch_spend * 4.33,
+                    "weekly_revenue": ch_rev_cal,
+                }
+        except Exception:
+            pass
+
+    opt_monthly_spend = opt_row["monthly_spend"]
+    opt_weekly_spend = opt_row["weekly_spend"]
 
     return {
-        "optimal_weekly_spend": optimal_spend,
-        "optimal_monthly_spend": optimal_spend * 4.33,
-        "optimal_gp3_first_order_weekly": opt_gp3_fo,
-        "optimal_gp3_first_order_monthly": opt_gp3_fo * 4.33,
-        "optimal_gp3_365d_weekly": opt_gp3_365d,
-        "optimal_gp3_365d_monthly": opt_gp3_365d * 4.33,
-        "new_customer_revenue_weekly": opt_rev,
-        "new_customer_revenue_monthly": opt_rev * 4.33,
+        "optimal_weekly_spend": opt_weekly_spend,
+        "optimal_monthly_spend": opt_monthly_spend,
+        "optimal_gp3_first_order_weekly": opt_gp3_fo / 4.33,
+        "optimal_gp3_first_order_monthly": opt_gp3_fo,
+        "optimal_gp3_365d_weekly": opt_gp3_365d / 4.33,
+        "optimal_gp3_365d_monthly": opt_gp3_365d,
+        "new_customer_revenue_weekly": opt_rev / 4.33 if amer_coefficients else opt_rev,
+        "new_customer_revenue_monthly": opt_rev if amer_coefficients else opt_rev * 4.33,
         "amer_at_optimal": opt_amer,
         "marginal_amer_at_optimal": marginal_amer,
         "breakeven_amer_first_order": breakeven_amer_first_order,
         "breakeven_amer_365d": breakeven_amer_365d,
         "channel_allocation": channel_allocation,
-        "current_weekly_spend": current_total,
-        "current_monthly_spend": current_total * 4.33,
-        "current_gp3_first_order_weekly": cur_gp3_fo,
-        "current_gp3_first_order_monthly": cur_gp3_fo * 4.33,
-        "current_gp3_365d_weekly": cur_gp3_365d,
-        "current_gp3_365d_monthly": cur_gp3_365d * 4.33,
+        "current_weekly_spend": cur_monthly / 4.33,
+        "current_monthly_spend": cur_monthly,
+        "current_gp3_first_order_weekly": cur_gp3_fo / 4.33,
+        "current_gp3_first_order_monthly": cur_gp3_fo,
+        "current_gp3_365d_weekly": cur_gp3_365d / 4.33,
+        "current_gp3_365d_monthly": cur_gp3_365d,
         "current_amer": cur_amer,
-        "spend_change_pct": (optimal_spend - current_total) / (current_total + 1e-8) * 100,
+        "spend_change_pct": (opt_monthly_spend - cur_monthly) / (cur_monthly + 1e-8) * 100,
         "at_upper_bound": at_upper_bound,
     }
 
