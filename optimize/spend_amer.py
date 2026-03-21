@@ -359,41 +359,57 @@ def find_optimal_spend(
     organic_weekly_revenue: float = 0,
     seasonal_multiplier: float = 1.0,
     calibration_factor: float = 1.0,
-    yoy_growth_pct: float = 0.0,
     max_spend_mult: float = 5.0,
     min_amer_floor: float = 0.3,
+    gp3_curve_df: pd.DataFrame = None,
 ) -> dict:
     """
     Find the spend level that maximises 365-day GP3.
 
-    Uses the aMER model: aMER = intercept + β × ln(spend), derived from
-    the MMM saturation curves. The GP3 formula is:
+    Uses a numerical sweep (matching the DTC Forecast Tool approach from
+    Section 10.2): compute GP3 at every spend level in the curve DataFrame
+    and pick the row with the highest GP3_365D.
 
-        GP3 = (aMER × spend) × LTV × GM2% − spend
+    This guarantees the optimal marker always sits at the visible peak
+    of the plotted curve — no analytical/numerical divergence.
 
-    Analytical solution — dGP3/dspend = 0 gives:
-
-        s* = exp((1/(LTV × GM2) − intercept − β) / β)
-
-    This is the spend where marginal 365D contribution = 1 SEK.
-
-    Seasonal context enters via seasonal_multiplier on the revenue side:
-    months with higher efficiency produce a higher intercept in the aMER
-    model, shifting the optimal spend right. aMER stays in a narrow band
-    while spend varies by month — matching real-world behaviour.
+    If gp3_curve_df is not provided, computes one internally.
 
     Returns dict with optimal spend, GP3 (both first-order and 365D),
     both breakeven aMER thresholds, channel allocation, and current comparison.
     """
-    curve = _derive_amer_curve(
+    # ── Build the GP3 curve if not provided ──
+    if gp3_curve_df is None:
+        gp3_curve_df = compute_gp3_curve(
+            results, gm2_pct, cltv_expansion_pct,
+            organic_weekly_revenue=organic_weekly_revenue,
+            seasonal_multiplier=seasonal_multiplier,
+            calibration_factor=calibration_factor,
+            n_points=200,
+            max_spend_mult=max_spend_mult,
+            min_amer_floor=min_amer_floor,
+        )
+
+    df = gp3_curve_df
+
+    # ── Numerical optimal: row with max GP3_365D ──
+    if df.empty:
+        logger.warning("GP3 curve is empty, cannot find optimal")
+        optimal_idx = 0
+    else:
+        optimal_idx = df["gp3_365d"].idxmax()
+
+    opt_row = df.loc[optimal_idx]
+    optimal_spend = opt_row["weekly_spend"]
+
+    # ── Current spend (from MMM training data) ──
+    curve_info = _derive_amer_curve(
         results, organic_weekly_revenue, seasonal_multiplier, calibration_factor,
     )
-    intercept = curve["intercept"]
-    beta = curve["beta_log_spend"]
-    current_total = curve["current_total"]
-    alloc_ratios = curve["alloc_ratios"]
-    channels = curve["channels"]
-    adstock_means = curve["adstock_means"]
+    current_total = curve_info["current_total"]
+    alloc_ratios = curve_info["alloc_ratios"]
+    channels = curve_info["channels"]
+    adstock_means = curve_info["adstock_means"]
 
     cltv_mult = 1 + cltv_expansion_pct / 100
     gm2_frac = gm2_pct / 100
@@ -401,52 +417,26 @@ def find_optimal_spend(
     breakeven_amer_first_order = 1 / gm2_frac
     breakeven_amer_365d = 1 / K
 
-    # ── Analytical optimal: dGP3/dspend = 0 ──
-    # (intercept + beta + beta × ln(s)) × K = 1
-    # ln(s*) = (1/K − intercept − beta) / beta
-    if beta < 0 and K > 0:
-        ln_optimal = (1.0 / K - intercept - beta) / beta
-        optimal_spend = np.exp(ln_optimal)
-    else:
-        optimal_spend = current_total
-
-    # Clamp to search range
-    max_spend = current_total * max_spend_mult
+    # Check if optimal is at the upper bound of the sweep
+    max_spend = df["weekly_spend"].max()
     at_upper_bound = optimal_spend >= max_spend * 0.95
-    optimal_spend = np.clip(optimal_spend, 0, max_spend)
 
-    # Check if aMER floor binds at optimal
-    amer_at_opt_raw = intercept + beta * np.log(max(optimal_spend, 1))
-    if amer_at_opt_raw < min_amer_floor:
-        # Floor binds — optimal is where aMER first hits the floor
-        floor_spend = np.exp((min_amer_floor - intercept) / beta)
-        # In floor region: GP3 = floor × s × K − s = s × (floor × K − 1)
-        # If floor × K < 1, GP3 is decreasing → optimal is at floor boundary
-        if min_amer_floor * K < 1:
-            optimal_spend = min(optimal_spend, floor_spend)
+    # ── Metrics at optimal (read directly from the curve) ──
+    opt_rev = opt_row["total_new_customer_revenue"]
+    opt_gp3_fo = opt_row["gp3_first_order"]
+    opt_gp3_365d = opt_row["gp3_365d"]
+    opt_amer = opt_row["amer"]
 
-    # Apply YoY growth
-    growth_mult = 1 + yoy_growth_pct / 100
-    optimal_spend *= growth_mult
+    # ── Metrics at current spend (interpolate from curve) ──
+    cur_idx = (df["weekly_spend"] - current_total).abs().idxmin()
+    cur_row = df.loc[cur_idx]
+    cur_rev = cur_row["total_new_customer_revenue"]
+    cur_gp3_fo = cur_row["gp3_first_order"]
+    cur_gp3_365d = cur_row["gp3_365d"]
+    cur_amer = cur_row["amer"]
 
-    def _metrics_at_spend(s):
-        """Compute revenue and GP3 at a given weekly spend level."""
-        if s <= 0:
-            return 0, 0, 0, 0
-        amer = max(min_amer_floor, intercept + beta * np.log(s))
-        nrev = amer * s
-        gp3_fo = nrev * gm2_frac - s
-        gp3_365d = nrev * K - s
-        return nrev, gp3_fo, gp3_365d, amer
-
-    opt_rev, opt_gp3_fo, opt_gp3_365d, opt_amer = _metrics_at_spend(optimal_spend)
-    cur_rev, cur_gp3_fo, cur_gp3_365d, cur_amer = _metrics_at_spend(current_total)
-
-    # Marginal aMER at optimal (numerical derivative of revenue)
-    eps = max(current_total * 0.001, 1)
-    rev_plus, _, _, _ = _metrics_at_spend(optimal_spend + eps)
-    rev_minus, _, _, _ = _metrics_at_spend(optimal_spend - eps)
-    marginal_amer = (rev_plus - rev_minus) / (2 * eps)
+    # Marginal aMER at optimal (from curve's marginal_roas column)
+    marginal_amer = opt_row.get("marginal_roas", 0)
 
     # Channel allocation at optimal spend (from MMM predictions)
     params = results.channel_params
@@ -977,7 +967,6 @@ def monthly_spend_plan(
             results, gm2_pct, cltv_expansion_pct,
             organic_weekly_revenue=organic_weekly,
             seasonal_multiplier=effective_mult,
-            yoy_growth_pct=yoy_growth_pct,
         )
 
         month_label = datetime.date(year, month_num, 1).strftime("%b %Y")

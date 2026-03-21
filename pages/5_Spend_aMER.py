@@ -480,17 +480,8 @@ with _m3:
     st.markdown("---")
     st.markdown(f"#### GP3 Curve — {sel_label}")
 
-    # Find optimal spend for this month
-    optimal = find_optimal_spend(
-        results, gm2_pct, cltv_expansion,
-        organic_weekly_revenue=organic_weekly,
-        seasonal_multiplier=effective_mult,
-        calibration_factor=cal_factor,
-        yoy_growth_pct=yoy_growth,
-        max_spend_mult=5.0,
-    )
-
-    # Generate GP3 curve — start from 20% of current to avoid misleading S-curve region
+    # Generate GP3 curve first, then find optimal FROM the curve.
+    # This guarantees the optimal marker sits at the visible peak.
     gp3_df = compute_gp3_curve(
         results, gm2_pct, cltv_expansion,
         organic_weekly_revenue=organic_weekly,
@@ -498,6 +489,16 @@ with _m3:
         calibration_factor=cal_factor,
         n_points=200,
         max_spend_mult=5.0,
+    )
+
+    # Find optimal by picking the peak of the curve (numerical sweep)
+    optimal = find_optimal_spend(
+        results, gm2_pct, cltv_expansion,
+        organic_weekly_revenue=organic_weekly,
+        seasonal_multiplier=effective_mult,
+        calibration_factor=cal_factor,
+        max_spend_mult=5.0,
+        gp3_curve_df=gp3_df,
     )
 
     # Clip to actionable range (from 20% of current spend onward)
@@ -873,7 +874,6 @@ with _m6:
                 organic_weekly_revenue=o_weekly,
                 seasonal_multiplier=eff,
                 calibration_factor=cal_factor,
-                yoy_growth_pct=yoy_growth,
             )
             overview_rows.append({
                 "month": mo["date"].strftime("%b %Y"),
